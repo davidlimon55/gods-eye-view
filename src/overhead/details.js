@@ -658,7 +658,7 @@ export const FILTERS = Object.freeze([
   // i18n-ignore (Over My House is English only)
   Object.freeze({ id: 'planes', label: 'Planes' }),
   // i18n-ignore (Over My House is English only)
-  Object.freeze({ id: 'satellites', label: 'Satellites (working)' }),
+  Object.freeze({ id: 'satellites', label: 'Satellites (working)', short: 'Satellites' }),
   // i18n-ignore (Over My House is English only)
   Object.freeze({ id: 'starlink', label: 'Starlink' }),
   // i18n-ignore (Over My House is English only)
@@ -670,7 +670,7 @@ export const FILTERS = Object.freeze([
   // i18n-ignore (Over My House is English only)
   Object.freeze({ id: 'unidentified', label: 'Not identified' }),
   // i18n-ignore (Over My House is English only)
-  Object.freeze({ id: 'planets', label: 'Planets and Moon' }),
+  Object.freeze({ id: 'planets', label: 'Planets and Moon', short: 'Planets, Moon' }),
   // i18n-ignore (Over My House is English only)
   Object.freeze({ id: 'stars', label: 'Stars' }),
 ]);

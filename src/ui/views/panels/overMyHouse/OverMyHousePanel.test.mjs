@@ -180,23 +180,22 @@ test('a tapped satellite shows its catalog facts, and crowded spots offer the ne
   gray.unmount();
 });
 
-test('filter chips show counts, say on or off plainly, turn groups off, and Show all resets', async () => {
+test('filter chips fold into one line, show counts, turn groups off, and All resets', async () => {
   const c = controls();
   const wrapper = mount(Panel, { props: { view: view(), controls: c } });
-  assert.equal(wrapper.get('.omh-filters-hint').text(), 'Tap to show or hide. Checked = shown.');
+  assert.equal(wrapper.get('.omh-filters-hint').text(), 'Tap to show or hide. Yellow with a check = shown.');
+  assert.equal(wrapper.get('.omh-filter-state').text(), 'Everything');
+  assert.equal(wrapper.get('.omh-filter-box').attributes('open'), undefined);
   const chips = wrapper.findAll('.omh-filters button');
-  const name = (b) => b.text().replace(/^✓/, '').replace(/\s*off$/, '').replace(/\s+\d+$/, '');
-  assert.deepEqual(chips.map(name), ['All', 'Planes', 'Satellites (working)', 'Starlink', 'Rocket bodies', 'Debris', 'Classified', 'Not identified', 'Planets and Moon', 'Stars']);
-  assert.match(chips[2].text(), /Satellites \(working\)\s+1/);
+  const name = (b) => b.text().replace(/^✓/, '').replace(/\s+\d+$/, '');
+  assert.deepEqual(chips.map(name), ['All', 'Planes', 'Satellites', 'Starlink', 'Rocket bodies', 'Debris', 'Classified', 'Not identified', 'Planets, Moon', 'Stars']);
+  assert.match(chips[2].text(), /Satellites\s+1/);
   // Every chip starts on: filled, with a check mark, and no "off".
   for (const chip of chips) {
     assert.equal(chip.attributes('aria-pressed'), 'true');
     assert.ok(chip.classes().includes('omh-chip--on'));
     assert.match(chip.text(), /^✓/);
-    assert.doesNotMatch(chip.text(), /off/);
   }
-  // Nothing hidden, so no extra Show all button.
-  assert.equal(wrapper.findAll('button').some((b) => b.text() === 'Show all'), false);
   await chips[7].trigger('click');
   assert.deepEqual(c.calls.find((call) => call[0] === 'setFilter'), ['setFilter', 'unidentified', false]);
   await chips[0].trigger('click');
@@ -208,16 +207,12 @@ test('filter chips show counts, say on or off plainly, turn groups off, and Show
   const offChip = filtered.findAll('.omh-filters button')[1];
   assert.equal(offChip.attributes('aria-pressed'), 'false');
   assert.ok(!offChip.classes().includes('omh-chip--on'));
-  assert.match(offChip.text(), /off$/);
+  assert.equal(filtered.get('.omh-filter-state').text(), 'Not identified only');
   assert.doesNotMatch(offChip.text(), /✓/);
   // All is off while anything is hidden; tapping it turns everything on.
   const all = filtered.findAll('.omh-filters button')[0];
   assert.equal(all.attributes('aria-pressed'), 'false');
   await all.trigger('click');
-  assert.deepEqual(c.calls.filter((call) => call[0] === 'setAllFilters').pop(), ['setAllFilters', true]);
-  const showAll = filtered.findAll('button').find((b) => b.text() === 'Show all');
-  assert.ok(showAll.classes().includes('omh-show-all'));
-  await showAll.trigger('click');
   assert.deepEqual(c.calls.filter((call) => call[0] === 'setAllFilters').pop(), ['setAllFilters', true]);
   filtered.unmount();
 });

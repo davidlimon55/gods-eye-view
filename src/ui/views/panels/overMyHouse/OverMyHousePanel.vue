@@ -92,6 +92,14 @@ const counts = computed(() => filterCounts(sky.value));
 function toggleFilter(id) {
   props.controls.setFilter(id, !isOn(id));
 }
+const filterSummary = computed(() => {
+  const on = FILTERS.filter((f) => isOn(f.id));
+  if (on.length === FILTERS.length) return 'Everything';
+  if (on.length === 0) return 'Nothing';
+  if (on.length === 1) return `${on[0].short ?? on[0].label} only`;
+  if (on.length === 2) return on.map((f) => f.short ?? f.label).join(' and ');
+  return `${on.length} of ${FILTERS.length} kinds`;
+});
 function toggleAll() {
   props.controls.setAllFilters(!allShown.value);
 }
@@ -290,28 +298,30 @@ watch(
       <summary>Right now</summary>
       <details class="omh-tip">
         <summary>How this works</summary>
-        <p>The circle is your sky. The middle is straight up. The edge is the horizon. North is at the top, like a map. Green dots are satellites you could see now. Light blue dots are space stations. Pink dots are classified satellites that amateur observers track. Gray dots are up there but too dark or dim to see. Orange arrows are planes. Satellites shine because the Sun lights them while your sky is dark. Tap any dot, even a gray one, to see what it is. Use the buttons above the map to show or hide each kind.</p>
+        <p>The circle is your sky. The middle is straight up. The edge is the horizon. North is at the top, like a map. Green dots are satellites you could see now. Light blue dots are space stations. Pink dots are classified satellites that amateur observers track. Gray dots are up there but too dark or dim to see. Orange arrows are planes. Satellites shine because the Sun lights them while your sky is dark. Tap any dot, even a gray one, to see what it is. Tap "Show on map" above the map to show or hide each kind.</p>
       </details>
       <p class="omh-note">{{ darkWords[sky?.sun?.darkness] ?? 'Working out your sky…' }}</p>
       <p v-if="sky" class="omh-count">
         {{ w('{seen} you could see now · {up} up there in total · {planes}', { seen: sky.counts.seeable, up: sky.counts.above, planes: sky.counts.aircraft === 1 ? '1 plane nearby' : w('{n} planes nearby', { n: sky.counts.aircraft }) }) }}
       </p>
-      <p id="omh-filters-hint" class="omh-note omh-filters-hint">Tap to show or hide. Checked = shown.</p>
-      <div class="omh-filters" role="group" aria-label="Show on the map" aria-describedby="omh-filters-hint">
-        <UiButton class="omh-chip omh-chip-all" :class="{ 'omh-chip--on': allShown }" :pressed="allShown" @click="toggleAll()"
-          ><span class="omh-chip-mark" aria-hidden="true">{{ allShown ? '✓' : '' }}</span>All<span v-if="!allShown" class="omh-chip-off" aria-hidden="true">some off</span></UiButton
-        >
-        <UiButton
-          v-for="f in FILTERS"
-          :key="f.id"
-          class="omh-chip"
-          :class="{ 'omh-chip--on': isOn(f.id) }"
-          :pressed="isOn(f.id)"
-          @click="toggleFilter(f.id)"
-          ><span class="omh-chip-mark" aria-hidden="true">{{ isOn(f.id) ? '✓' : '' }}</span>{{ f.label }} <span class="omh-chip-n">{{ counts[f.id] }}</span><span v-if="!isOn(f.id)" class="omh-chip-off" aria-hidden="true">off</span></UiButton
-        >
-      </div>
-      <UiButton v-if="!allShown" variant="action" class="omh-more omh-show-all" @click="props.controls.setAllFilters(true)">Show all</UiButton>
+      <details class="omh-filter-box">
+        <summary class="omh-filter-sum">Show on map: <strong class="omh-filter-state">{{ filterSummary }}</strong></summary>
+        <p id="omh-filters-hint" class="omh-note omh-filters-hint">Tap to show or hide. Yellow with a check = shown.</p>
+        <div class="omh-filters" role="group" aria-label="Show on the map" aria-describedby="omh-filters-hint">
+          <UiButton class="omh-chip omh-chip-all" :class="{ 'omh-chip--on': allShown }" :pressed="allShown" @click="toggleAll()"
+            ><span class="omh-chip-mark" aria-hidden="true">{{ allShown ? '✓' : '' }}</span>All</UiButton
+          >
+          <UiButton
+            v-for="f in FILTERS"
+            :key="f.id"
+            class="omh-chip"
+            :class="{ 'omh-chip--on': isOn(f.id) }"
+            :pressed="isOn(f.id)"
+            @click="toggleFilter(f.id)"
+            ><span class="omh-chip-mark" aria-hidden="true">{{ isOn(f.id) ? '✓' : '' }}</span>{{ f.short ?? f.label }} <span class="omh-chip-n">{{ counts[f.id] }}</span></UiButton
+          >
+        </div>
+      </details>
       <SkyChart
         :filters="filters"
         :sky="sky"
@@ -728,22 +738,43 @@ watch(
 .omh-more {
   margin: 0.4em 0;
 }
+.omh-filter-box {
+  margin: 0.4em 0;
+  border: 1px solid #33406a;
+  border-radius: 12px;
+  padding: 0 0.6em;
+}
+.omh-filter-sum {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.omh-filter-state {
+  color: #ffd166;
+}
 .omh-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4em;
-  margin: 0.5em 0;
+  gap: 0.35em;
+  margin: 0.3em 0 0.6em;
+  font-size: 0.85em;
 }
 .omh-filters-hint {
-  margin-bottom: 0.2em;
+  margin: 0 0 0.2em;
+  font-size: 0.9em;
 }
-/* Off: an outline chip with a dimmer label and the word "off". */
+/* Off: an outline chip with a dimmer label. */
 .omh :deep(.omh-chip) {
   display: inline-flex;
   align-items: center;
-  gap: 0.3em;
+  gap: 0.25em;
+  min-height: 44px;
   border-radius: 999px;
-  padding: 0.3em 0.9em;
+  padding: 0.15em 0.7em;
   background: transparent;
   border: 2px dashed #6c7aa6;
   color: #c9d3ea;
@@ -766,19 +797,11 @@ watch(
 }
 .omh-chip-mark:empty {
   width: 0;
-  margin-right: -0.3em;
+  margin-right: -0.25em;
 }
 .omh-chip-n {
   opacity: 0.85;
   font-variant-numeric: tabular-nums;
-}
-.omh-chip-off {
-  font-size: 0.8em;
-  font-weight: 600;
-  padding: 0.05em 0.45em;
-  border-radius: 999px;
-  border: 1px solid #6c7aa6;
-  color: #dbe4ff;
 }
 /* Brief pressed look on every tap (a colour change; the shrink only when
    motion is welcome). */
