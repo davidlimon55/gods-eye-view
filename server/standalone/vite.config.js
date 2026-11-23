@@ -9,6 +9,7 @@ import { conformanceReferencesPlugin } from './conformance-references.js';
 import { googleTokenUnavailablePlugin } from './google-token-unavailable.js';
 import { standaloneVoiceTools } from './voiceTools.js';
 import { unwatchedRuntimeDirsPlugin } from './unwatched-cache.js';
+import { overheadPagePlugin } from './overhead-page.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -22,7 +23,7 @@ export function standaloneConfig(
     if (process.env[key] === undefined) process.env[key] = value;
   }
   const tools = standaloneVoiceTools();
-  return createBrowserViteConfig({
+  const config = createBrowserViteConfig({
     plugins: [
       ...localProviderPlugins({
         realtime: { tools },
@@ -34,6 +35,7 @@ export function standaloneConfig(
       conformanceReferencesPlugin(),
       apiNotFoundPlugin(),
       unwatchedRuntimeDirsPlugin(),
+      overheadPagePlugin(),
     ],
     googleApiKey: process.env.GOOGLE_MAPS_API_KEY,
     cesiumToken: process.env.CESIUM_ION_TOKEN,
@@ -44,6 +46,18 @@ export function standaloneConfig(
     allowedHosts: resolveAllowedHosts(process.env.GEV_ALLOWED_HOSTS),
     command,
   });
+  // Two pages: the globe and the light Over My House sky page.
+  config.build = {
+    ...config.build,
+    rollupOptions: {
+      ...config.build?.rollupOptions,
+      input: {
+        main: `${root}index.html`,
+        overhead: `${root}overhead.html`,
+      },
+    },
+  };
+  return config;
 }
 
 export default defineConfig(standaloneConfig);

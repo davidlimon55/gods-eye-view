@@ -1,0 +1,16 @@
+{
+  "id": "/overhead.html",
+  "name": "Over My House",
+  "short_name": "Over My House",
+  "description": "What is in the sky over my house right now.",
+  "start_url": "/overhead.html",
+  "scope": "/",
+  "display": "browser",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "icons": [
+    { "src": "/icons/overhead-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/overhead-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/overhead-180.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}
