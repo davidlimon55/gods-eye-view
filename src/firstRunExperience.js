@@ -198,6 +198,8 @@ export function shouldShowFirstRun({
   // An embedded globe never shows the welcome launcher.
   if (params.get('embed') === '1' || globalThis.GEV_EMBED_INLINE === true)
     return false;
+  // The Over My House direct link opens the sky view, never the launcher.
+  if (params.get('view') === 'overhead') return false;
   // The demo/support escape hatch outranks both suppressions on purpose.
   if (params.get('welcome') === '1') return true;
   if (readStored('local', storage, FIRST_RUN_STORAGE_KEY) === 'suppressed')

@@ -233,6 +233,22 @@ across the antimeridian, so they cannot use the strict ±180 check as-is, and
 `src/sources/adsbRecords.js` and `server/providers/common/geo.js` keep their own
 implementations.
 
+## Over My House — November 23, 2026
+
+`/overhead.html` (short links `/overhead` and `/?view=overhead`, which
+redirect there) is a light, installable page without the 3D globe that shows
+what is over one place right now: tracked satellites, stations, Starlink,
+rocket bodies, debris, hobbyist-tracked classified objects, aircraft within
+about 50 km, planets, the Moon and bright stars, plus tonight's passes,
+Starlink trains and nearby launches. "What was that?" ranks candidates for a
+sighting by time, direction, height, motion, brightness and blinking. The same
+panel is the `over-my-house` application view. Feeds come through keyless
+`/api/overhead/*` routes (`server/providers/overhead/`) with a host allowlist,
+per-route rate limits and a size-budgeted disk cache; orbit maths runs in a
+browser worker (`src/overhead/`). An optional daily email (`OMH_*`
+environment variables, Resend or Postmark) is off by default. Text is English
+only. See [OVER-MY-HOUSE.md](OVER-MY-HOUSE.md).
+
 ## Shipwrecks — EMODnet and Wikidata
 
 The Events group includes **Shipwrecks** (`shipwrecks`, share-link token `01`),
