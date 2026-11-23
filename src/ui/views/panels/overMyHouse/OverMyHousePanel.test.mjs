@@ -72,6 +72,16 @@ test('the panel shows the sky in plain words with large tap targets and text siz
   assert.match(wrapper.text(), /What was that\?/);
   assert.match(wrapper.text(), /ISS \(ZARYA\)/);
   assert.match(wrapper.text(), /How this works/);
+  // A plain line under the map says what the marks mean.
+  assert.match(wrapper.get('.omh-legend').text(), /middle is straight overhead.*edge is the horizon.*Orange arrows are planes.*gray dots are satellites.*Yellow dots are planets/);
+  // Distances are miles; the launch here is about 1,000 miles away.
+  assert.match(wrapper.text(), /\d+ mi to the east/);
+  assert.doesNotMatch(wrapper.text(), /\bkm\b/);
+  assert.match(wrapper.text(), /about half a mile/);
+  assert.doesNotMatch(wrapper.text(), /Hark/);
+  // The map's zoom buttons are real buttons with names.
+  for (const name of ['Zoom in', 'Zoom out', 'Reset the map'])
+    assert.ok(wrapper.find(`button[aria-label="${name}"]`).exists(), name);
   assert.match(wrapper.get('section.omh').attributes('style'), /--omh-size: 21px/);
   // Secondary sections start closed; "Right now" starts open.
   const sections = wrapper.findAll('details.omh-sec');
@@ -117,5 +127,11 @@ test('the size buttons can be switched off', () => {
     props: { view: view({ settings: { home: null, observer: 'home', textSize: 'normal', sizerOn: false } }), controls: controls() },
   });
   assert.equal(wrapper.find('.omh-sizer').exists(), false);
+  wrapper.unmount();
+});
+
+test('the selected thing shows its height in miles', () => {
+  const wrapper = mount(Panel, { props: { view: view({ selectedId: '25544' }), controls: controls() } });
+  assert.match(wrapper.get('.omh-card').text(), /About 261 mi up/);
   wrapper.unmount();
 });

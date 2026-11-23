@@ -41,6 +41,9 @@ test('the digest is plain words with the direct link and no secrets', () => {
   });
   assert.match(digest.text, /https:\/\/globe\.example\.com\/overhead\.html/);
   assert.match(digest.text, /Starship Flight 12/);
+  // Starbase is about 230 miles from the San Antonio test home.
+  assert.match(digest.text, /about \d+ miles to the south/);
+  assert.doesNotMatch(digest.text, /\bkm\b/);
   assert.match(digest.html, /target="_blank" rel="noopener"/);
   assert.match(digest.subject, /Tonight's sky/);
   assert.doesNotMatch(`${digest.text}${digest.html}`, /re_test/);

@@ -11,7 +11,7 @@ import { COMPASS_POINTS, bearingOf, compassPoint, heightBand } from '../../../..
 import { KIND_LABELS } from '../../../../overhead/satellites.js';
 import { TEXT_SIZE_PX } from '../../../../overhead/settings.js';
 import { localPosition } from '../../../../overhead/sky.js';
-import { wording, directionWord, clock, dayClock } from '../../../../overhead/words.js';
+import { wording, directionWord, clock, dayClock, miles } from '../../../../overhead/words.js';
 import { createVoiceInput } from '../../../../overhead/voice.js';
 
 // The Over My House panel. Everything shown is plain English (see
@@ -194,7 +194,7 @@ const launches = computed(() =>
 );
 const fireballs = computed(() =>
   (v.value.fireballs ?? [])
-    .map((f) => ({ ...f, km: Math.round(localPosition(observer.value, f.lat, f.lon, 0).groundKm) }))
+    .map((f) => ({ ...f, km: localPosition(observer.value, f.lat, f.lon, 0).groundKm }))
     .slice(0, 6),
 );
 
@@ -272,11 +272,12 @@ watch(
         label="Map of your sky. North is up and the middle is straight overhead."
         @select="(id) => props.controls.select(id)"
       />
+      <p class="omh-note omh-legend">The middle is straight overhead. The edge is the horizon. Orange arrows are planes. Green and gray dots are satellites (gray ones are too dim to see). Yellow dots are planets. Pinch or tap + to zoom, and tap a dot to see what it is.</p>
       <div v-if="selected" class="omh-card">
         <strong>{{ selected.name }}</strong>
         <span>{{ kindWord(selected.kind) }} · {{ where(selected.az, selected.el) }}</span>
-        <span v-if="Number.isFinite(selected.heightKm)">{{ w('About {km} km up', { km: selected.heightKm }) }}</span>
-        <span v-if="Number.isFinite(selected.altitudeFt)">{{ w('{feet} feet up, {km} km away', { feet: selected.altitudeFt, km: Math.round(selected.distanceKm) }) }}</span>
+        <span v-if="Number.isFinite(selected.heightKm)">{{ w('About {mi} mi up', { mi: miles(selected.heightKm) }) }}</span>
+        <span v-if="Number.isFinite(selected.altitudeFt)">{{ w('{feet} ft up, {mi} mi away', { feet: selected.altitudeFt, mi: miles(selected.distanceKm) }) }}</span>
       </div>
       <ul v-if="listedVisible.length" class="omh-list">
         <li v-for="o in listedVisible" :key="o.id">
@@ -293,7 +294,7 @@ watch(
         <ul class="omh-list">
           <li v-for="p in planesNow" :key="p.id" class="omh-plain">
             <strong>{{ w('Plane {name}', { name: p.name }) }}</strong>
-            <span>{{ where(p.az, p.el) }} · {{ w('{feet} ft, {km} km away', { feet: p.altitudeFt, km: Math.round(p.distanceKm) }) }}<template v-if="p.type"> · {{ p.type }}</template></span>
+            <span>{{ where(p.az, p.el) }} · {{ w('{feet} ft, {mi} mi away', { feet: p.altitudeFt, mi: miles(p.distanceKm) }) }}<template v-if="p.type"> · {{ p.type }}</template></span>
           </li>
           <li v-for="p in planetsUp" :key="p.id" class="omh-plain">
             <strong>{{ p.name }}</strong>
@@ -405,7 +406,7 @@ watch(
         <ul v-if="passes.length" class="omh-list">
           <li v-for="p in passes" :key="p.id + p.start" class="omh-plain">
             <strong>{{ w('{time} · {name}', { time: clock(p.start), name: p.name }) }}</strong>
-            <span>{{ w('{kind} · {bright} · from the {from}, highest {el}° in the {mid}, ends in the {to}', { kind: kindWord(p.kind), bright: brightness(p.bestMag), from: directionWord(p.startDir), el: p.maxEl, mid: directionWord(p.maxDir), to: directionWord(p.endDir) }) }}</span>
+            <span>{{ w('{kind} · {bright} · from the {from}, highest {el}° in the {mid}, ends in the {to}', { kind: kindWord(p.kind), bright: brightness(p.bestMag), from: directionWord(p.startDir), el: p.maxEl, mid: directionWord(p.maxDir), to: directionWord(p.endDir) }) }}<template v-if="Number.isFinite(p.heightKm)"> · {{ w('about {mi} mi up', { mi: miles(p.heightKm) }) }}</template></span>
           </li>
         </ul>
         <p v-else class="omh-note">No bright passes found for tonight.</p>
@@ -422,7 +423,7 @@ watch(
       <ul v-if="launches.length" class="omh-list">
         <li v-for="l in launches" :key="l.id" class="omh-plain">
           <strong>{{ w('{time} · {name}', { time: dayClock(Date.parse(l.net)), name: l.name }) }}</strong>
-          <span>{{ l.location || l.pad }}<template v-if="l.where"> · {{ w('{km} km to the {dir}', { km: Math.round(l.where.groundKm), dir: directionWord(compassPoint(l.where.az)) }) }}</template><template v-if="l.status"> · {{ l.status }}</template></span>
+          <span>{{ l.location || l.pad }}<template v-if="l.where"> · {{ w('{mi} mi to the {dir}', { mi: miles(l.where.groundKm), dir: directionWord(compassPoint(l.where.az)) }) }}</template><template v-if="l.status"> · {{ l.status }}</template></span>
           <a v-if="l.webcast" class="omh-link" :href="l.webcast" target="_blank" rel="noopener">More about this launch</a>
         </li>
       </ul>
@@ -438,7 +439,7 @@ watch(
       <ul v-if="fireballs.length" class="omh-list">
         <li v-for="f in fireballs" :key="f.date" class="omh-plain">
           <strong>{{ dayClock(Date.parse(f.date)) }}</strong>
-          <span>{{ w('About {km} km from you', { km: f.km }) }}</span>
+          <span>{{ w('About {mi} mi from you', { mi: miles(f.km) }) }}</span>
         </li>
       </ul>
       <p v-else class="omh-note">No fireballs reported in the last few months.</p>
@@ -448,7 +449,7 @@ watch(
       <summary>Settings</summary>
       <details class="omh-tip">
         <summary>How this works</summary>
-        <p>Your home spot stays on this phone or computer only. The app sends only a rounded location (about 1 km) to look up planes near you.</p>
+        <p>Your home spot stays on this phone or computer only. The app sends only a rounded location (about half a mile) to look up planes near you.</p>
       </details>
       <h2 class="omh-q">Look up from</h2>
       <UiSegmented v-model="lookFrom" :options="lookFromOptions" label="Look up from" keyboard="radio" class="omh-seg omh-wrap" />

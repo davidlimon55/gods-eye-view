@@ -11,7 +11,10 @@ import {
 } from '../../../src/overhead/sky.js';
 import { nextDarkWindow } from '../../../src/overhead/astro.js';
 import { compassPoint } from '../../../src/overhead/compass.js';
-import { directionWord as dirWord } from '../../../src/overhead/words.js';
+import {
+  directionWord as dirWord,
+  milesWords,
+} from '../../../src/overhead/words.js';
 import { validLatitude, validLongitude } from './sources.js';
 
 const EMAIL_RE = /^[^\s@<>",;]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/;
@@ -185,7 +188,7 @@ export function composeDigest({
     if (notable.length) {
       lines.push('', 'Bright things passing over:');
       for (const p of notable) {
-        const line = `- ${time.format(p.start)}: ${p.name} (${KIND_WORDS[p.kind] ?? 'satellite'}), ${brightWords(p.bestMag)}. Rises in the ${dirWord(p.startDir)}, highest ${p.maxEl}° up in the ${dirWord(p.maxDir)}, leaves in the ${dirWord(p.endDir)}.`;
+        const line = `- ${time.format(p.start)}: ${p.name} (${KIND_WORDS[p.kind] ?? 'satellite'}), ${brightWords(p.bestMag)}. Rises in the ${dirWord(p.startDir)}, highest ${p.maxEl}° up in the ${dirWord(p.maxDir)}${Number.isFinite(p.heightKm) ? ` (about ${milesWords(p.heightKm)} high)` : ''}, leaves in the ${dirWord(p.endDir)}.`;
         lines.push(line);
         htmlItems.push(escapeHtml(line.slice(2)));
         items += 1;
@@ -227,7 +230,7 @@ export function composeDigest({
       'Rocket launches you might see (low in the sky, if the weather is clear):',
     );
     for (const l of nearLaunches.slice(0, 4)) {
-      const line = `- ${time.format(Date.parse(l.net))}: ${l.name} from ${l.location || l.pad}, about ${Math.round(l.where.groundKm)} km to the ${dirWord(compassPoint(l.where.az))}. Times can change.`;
+      const line = `- ${time.format(Date.parse(l.net))}: ${l.name} from ${l.location || l.pad}, about ${milesWords(l.where.groundKm)} to the ${dirWord(compassPoint(l.where.az))}. Times can change.`;
       lines.push(line);
       htmlItems.push(escapeHtml(line.slice(2)));
       items += 1;

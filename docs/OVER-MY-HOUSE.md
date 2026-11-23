@@ -32,7 +32,39 @@ is set, the page uses downtown San Antonio, TX and says so. A text-size
 control (Small / Normal / Large / Extra large, 18px base) and a microphone
 button (the browser's Web Speech API, hidden where unsupported) are on the
 page. The page
-is `noindex`, because it shows the visitor's own location.
+is `noindex`, because it shows the visitor's own location. To look up planes
+the browser sends only a rounded location (about half a mile).
+
+## Units
+
+Everything people read is in **miles**, with **feet** for plane heights:
+plane distance ("41950 ft, 7 mi away"), satellite height ("About 340 mi up"),
+how high a pass gets in Tonight, launch and fireball distance, the "What was
+that?" reasons and the email heads-up. The maths stays in kilometres; only
+the words convert (1 km = 0.621371 mi, `miles()` and `milesWords()` in
+`src/overhead/words.js`). Under 10 miles shows one decimal ("6.8"), from 10
+up shows whole miles ("340").
+
+## Sky map
+
+The round map (`src/ui/views/panels/overMyHouse/SkyChart.vue`, a canvas) has
+the middle straight overhead and the edge at the horizon, north up and east
+right. A plain line under it says what the marks are: orange arrows planes,
+green and gray dots satellites (gray too dim to see), yellow dots planets.
+
+- **Zoom**: pinch on a phone, the + / − buttons (52px, any device), or the
+  mouse wheel once the map has been clicked (Ctrl + wheel and trackpad pinch
+  work straight away). Up to 8x. **Reset** goes back to the whole sky. The
+  buttons animate for 180 ms, or jump when the device asks for reduced motion.
+- **Pan**: drag with one finger or the mouse once zoomed in; two fingers pan
+  while pinching. At 1x a one-finger drag scrolls the page as usual
+  (`touch-action: pan-y`); zoomed in the map takes every touch
+  (`touch-action: none`). Two-finger touches never zoom the whole page.
+- Dots, arrows and labels keep their size at any zoom; the N / E / S / W
+  letters stay on their side and stick to the map's edge when zoomed.
+- **Tapping** picks the nearest thing within about 24px of the finger, rings
+  it in white on the map and shows its card. A pinch or drag never counts as
+  a tap. The zoom and tap maths is in `src/overhead/skyView.js`.
 
 ## How it works
 
@@ -41,7 +73,7 @@ is `noindex`, because it shows the visitor's own location.
   | Route | Data | Cache |
   | --- | --- | --- |
   | `GET /api/overhead/catalog` | Satellites, rocket bodies, debris (CelesTrak) and classified objects (McCants) | 6 h (CelesTrak), 12 h (McCants) |
-  | `GET /api/overhead/aircraft?lat=&lon=` | Aircraft within about 50 km (adsb.lol) | 15 s per ~1 km cell |
+  | `GET /api/overhead/aircraft?lat=&lon=` | Aircraft within about 31 miles / 50 km (adsb.lol) | 15 s per 0.01° cell (about 0.7 mi) |
   | `GET /api/overhead/launches` | Launches from 3 h ago to 36 h ahead (Launch Library 2) | 1 h |
   | `GET /api/overhead/fireballs` | Located fireballs, last 180 days (NASA/JPL CNEOS) | 12 h |
   | `GET /api/overhead/status` | Feed health, cache size, email-alert state | none |
@@ -147,5 +179,5 @@ shows whether alerts are on and any setting problems, never the key.
 - **English only.** The page and email text are plain English and are not yet
   in the app's translation catalogs.
 - Brightness is an estimate; classified-object positions can be days old.
-- Aircraft are a ~50 km snapshot and depend on adsb.lol's volunteer receivers
+- Aircraft are a ~31-mile (50 km) snapshot and depend on adsb.lol's volunteer receivers
   near you.

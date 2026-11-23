@@ -35,6 +35,7 @@ import {
   compassPoint,
   heightBand,
 } from './compass.js';
+import { milesWords } from './words.js';
 
 /** Lowest height (degrees) the lists count as "overhead". */
 export const MIN_ELEVATION = 10;
@@ -334,6 +335,7 @@ export function passesBetween(
       current.endAz = look.az;
       if (look.el > current.maxEl) {
         current.maxEl = look.el;
+        current.maxHeightKm = look.heightKm;
         current.maxAt = step.t;
         current.maxAz = look.az;
       }
@@ -359,6 +361,9 @@ function finishPass(object, pass) {
     end: pass.end,
     maxAt: pass.maxAt,
     maxEl: Math.round(pass.maxEl),
+    heightKm: Number.isFinite(pass.maxHeightKm)
+      ? Math.round(pass.maxHeightKm)
+      : null,
     startDir: compassPoint(pass.startAz),
     maxDir: compassPoint(pass.maxAz),
     endDir: compassPoint(pass.endAz),
@@ -584,8 +589,8 @@ export function identify(catalog, home, query, extra = {}) {
               dir: compassPoint(plane.az),
               height: heightWord(plane.el),
             }),
-            reason('About {km} km away, flying at {feet} feet.', {
-              km: Math.round(plane.distanceKm),
+            reason('About {miles} away, flying at {feet} feet.', {
+              miles: milesWords(plane.distanceKm),
               feet: plane.altitudeFt,
             }),
             ...(heading !== null
@@ -664,8 +669,8 @@ export function identify(catalog, home, query, extra = {}) {
       el: where.el,
       heading: null,
       reasons: [
-        reason('A rocket launched about {km} km away, toward the {dir}.', {
-          km: Math.round(where.groundKm),
+        reason('A rocket launched about {miles} away, toward the {dir}.', {
+          miles: milesWords(where.groundKm),
           dir: compassPoint(where.az),
         }),
         reason(
@@ -729,9 +734,9 @@ function candidateFromObject(object, best) {
       }),
     );
   reasons.push(
-    reason('{kind}, about {km} km up.', {
+    reason('{kind}, about {miles} up.', {
       kind: KIND_LABELS[object.kind] ?? KIND_LABELS.payload,
-      km: Math.round(look.heightKm),
+      miles: milesWords(look.heightKm),
     }),
   );
   return {

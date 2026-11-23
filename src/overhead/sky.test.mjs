@@ -12,6 +12,7 @@ import {
 import { lookAt, observerGd } from './satellites.js';
 import { sunElevation } from './astro.js';
 import { compassPoint, heightBand } from './compass.js';
+import { wording } from './words.js';
 import { FIXTURE_HOME, FIXTURE_NOW, FIXTURE_ROWS } from './testFixtures.mjs';
 
 const catalog = buildCatalog({ objects: [...FIXTURE_ROWS, FIXTURE_ROWS[0]] }, { nowMs: FIXTURE_NOW });
@@ -58,6 +59,7 @@ test('passes are found in the dark and Starlink trains need several satellites',
   const iss = passes.find((p) => p.id === '25544');
   assert.ok(iss, 'the ISS pass is listed');
   assert.ok(iss.maxEl >= 30);
+  assert.ok(iss.heightKm > 380 && iss.heightKm < 460, `pass height ${iss.heightKm}`);
   assert.ok(iss.bestMag < 1, `ISS brightness ${iss.bestMag}`);
   assert.deepEqual(starlinkTrains(passes), []);
   const fake = Array.from({ length: 6 }, (_, i) => ({ kind: 'starlink', intlDes: '2026-256A', start: i * 30000, end: i * 30000 + 240000, startDir: 'W', endDir: 'E', maxEl: 50, bestMag: 3 }));
@@ -75,6 +77,12 @@ test('What was that? names the ISS when the description fits', () => {
   assert.equal(result.candidates[0].id, '25544');
   assert.notEqual(result.verdict, 'none');
   assert.ok(result.candidates[0].reasons.length >= 3);
+  // Heights and distances read in miles, never km.
+  const said = result.candidates[0].reasons
+    .map((r) => wording(r.text, r.values))
+    .join(' ');
+  assert.match(said, /about \d+ miles up/);
+  assert.doesNotMatch(said, /\bkm\b/);
 });
 
 test('What was that? says honestly when nothing fits', () => {
@@ -107,6 +115,11 @@ test('a still light matches a planet or star, and planes come from ADS-B', () =>
     blinking: true,
   }, { aircraft: adsb, aircraftAt: night });
   assert.equal(pick.candidates[0].kind, 'aircraft');
+  const planeWords = pick.candidates[0].reasons
+    .map((r) => wording(r.text, r.values))
+    .join(' ');
+  assert.match(planeWords, /About [\d.]+ miles? away, flying at 9000 feet\./);
+  assert.doesNotMatch(planeWords, /\bkm\b/);
   const p = localPosition(FIXTURE_HOME, FIXTURE_HOME.lat + 1, FIXTURE_HOME.lon, 0);
   assert.ok(Math.abs(p.groundKm - 111) < 2);
   assert.ok(p.az < 1 || p.az > 359);
