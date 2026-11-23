@@ -146,11 +146,24 @@ export function aircraftInSky(adsb, home, { atMs, snapshotMs } = {}) {
     }
     const pos = localPosition(home, lat, lon, feet * 0.0003048);
     if (pos.el < 0) continue;
+    const callsign = String(ac.flight || '').trim();
+    const reg = String(ac.r || '').trim();
+    const rate = Number(ac.baro_rate ?? ac.geom_rate);
     out.push({
       id: `ac-${ac.hex}`,
       kind: 'aircraft',
-      name: String(ac.flight || ac.r || ac.hex || '').trim() || 'Aircraft',
+      name: callsign || reg || String(ac.hex || '').trim() || 'Aircraft',
+      hex: /^~?[0-9a-f]{6}$/i.test(String(ac.hex || ''))
+        ? String(ac.hex).toLowerCase()
+        : null,
+      callsign,
+      reg,
       type: String(ac.t || '').trim(),
+      desc: String(ac.desc || '').trim(),
+      lat: Math.round(lat * 1000) / 1000,
+      lon: Math.round(lon * 1000) / 1000,
+      verticalFpm: Number.isFinite(rate) ? Math.round(rate) : null,
+      onGround: ac.alt_baro === 'ground',
       az: pos.az,
       el: pos.el,
       distanceKm: pos.groundKm,
@@ -198,7 +211,7 @@ export function skyNow(
   catalog,
   home,
   ms,
-  { aircraft, aircraftAt, limit = 400 } = {},
+  { aircraft, aircraftAt, limit = 3000 } = {},
 ) {
   const gd = observerGd(home.lat, home.lon);
   const observer = { gd };
@@ -226,6 +239,11 @@ export function skyNow(
       visible,
       rangeKm: Math.round(look.rangeKm),
       heightKm: Math.round(look.heightKm),
+      speedKms: Number.isFinite(look.speedKms)
+        ? Math.round(look.speedKms * 100) / 100
+        : null,
+      intlDes: object.intlDes,
+      noCatalog: Boolean(object.noCatalog),
       heading: next ? skyHeading(look, next) : null,
     });
   }

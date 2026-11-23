@@ -13,6 +13,7 @@ export const OVERHEAD_ALLOWED_HOSTS = Object.freeze([
   'celestrak.org',
   'www.mmccants.org',
   'api.adsb.lol',
+  'vrs-standing-data.adsb.lol',
   'll.thespacedevs.com',
   'ssd-api.jpl.nasa.gov',
 ]);
@@ -73,6 +74,42 @@ export function adsbPointUrl(lat, lon, radiusNm = 27) {
   const radius = Math.max(1, Math.min(50, Math.round(Number(radiusNm))));
   return new URL(
     `https://api.adsb.lol/v2/point/${safeLat.toFixed(2)}/${safeLon.toFixed(2)}/${radius}`,
+  );
+}
+
+/**
+ * CelesTrak's whole satellite catalog (SATCAT) as CSV: owner, launch date,
+ * launch site and object type for every catalogued object. It updates once
+ * or twice a day by hand, so this is fetched at most once a day.
+ */
+export const CELESTRAK_SATCAT_URL = new URL(
+  'https://celestrak.org/pub/satcat.csv',
+);
+
+/**
+ * adsb.lol route lookup (POST {planes: [{callsign, lat, lng}]}, at most 100
+ * planes). Marked `x-quota: free` in api.adsb.lol/api/openapi.json, so it does
+ * not count against the 500-a-day keyless quota for /v2/.
+ */
+export const ADSB_ROUTESET_URL = new URL('https://api.adsb.lol/api/0/routeset');
+
+/** A callsign as adsb.lol sends it (letters and digits), upper case, or null. */
+export function cleanCallsign(value) {
+  const cs = String(value ?? '')
+    .trim()
+    .toUpperCase();
+  return /^[A-Z0-9]{2,8}$/.test(cs) ? cs : null;
+}
+
+/**
+ * The static route file adsb.lol serves for one callsign (Virtual Radar
+ * Server standing data, CC0), used when the routeset answer is empty.
+ */
+export function vrsRouteUrl(callsign) {
+  const cs = cleanCallsign(callsign);
+  if (!cs) throw new Error('invalid callsign');
+  return new URL(
+    `https://vrs-standing-data.adsb.lol/routes/${cs.slice(0, 2)}/${cs}.json`,
   );
 }
 
@@ -138,16 +175,20 @@ export function assertAllowedUpstream(url) {
  */
 export async function fetchUpstream(
   url,
-  { timeoutMs = 20000, accept, fetchImpl = globalThis.fetch } = {},
+  { timeoutMs = 20000, accept, fetchImpl = globalThis.fetch, json } = {},
 ) {
   const safe = assertAllowedUpstream(url);
   return fetchImpl(safe.toString(), {
     redirect: 'error',
     signal: AbortSignal.timeout(timeoutMs),
+    ...(json === undefined
+      ? {}
+      : { method: 'POST', body: JSON.stringify(json) }),
     headers: {
       'User-Agent': OVERHEAD_USER_AGENT,
       'Accept-Encoding': 'gzip, br',
       ...(accept ? { Accept: accept } : {}),
+      ...(json === undefined ? {} : { 'Content-Type': 'application/json' }),
     },
   });
 }

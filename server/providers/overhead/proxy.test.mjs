@@ -8,6 +8,8 @@ function fakeFeeds() {
     aircraft: { near: async (lat, lon) => ({ at: 1, state: 'MISS', value: { ac: [{ lat, lon }] } }), status: () => ({}) },
     launches: { get: async () => ({ at: 1, state: 'HIT', value: [] }), status: () => ({}) },
     fireballs: { get: async () => ({ at: 1, state: 'HIT', value: [] }), status: () => ({}) },
+    routes: { lookup: async (planes) => ({ state: 'MISS', routes: { [planes[0].callsign]: { known: false, reason: 'unknown', seen: planes[0] } } }), status: () => ({}) },
+    object: async (id) => ({ found: id === '25544', loaded: true, id }),
     cache: { usage: async () => ({ bytes: 0 }) },
     status: () => [],
   };
@@ -49,6 +51,18 @@ test('routes validate input and refuse other methods and cross-site callers', as
   assert.equal((await request('/api/overhead/catalog', { method: 'POST' })).status, 405);
   assert.equal((await request('/api/overhead/nope')).status, 404);
   assert.equal((await request('/api/overhead/status', { headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
+});
+
+test('route and catalog lookups take only checked values', async () => {
+  const request = install();
+  const r = await request('/api/overhead/routes?cs=DAL2009&lat=29.4&lon=-98.5&track=40');
+  assert.equal(r.status, 200);
+  assert.deepEqual(JSON.parse(r.body).route.seen, { callsign: 'DAL2009', lat: 29.4, lon: -98.5, track: 40 });
+  assert.equal((await request('/api/overhead/routes?cs=DAL2009&lat=x&lon=1')).status, 400);
+  assert.equal((await request('/api/overhead/routes?lat=1&lon=1')).status, 400);
+  assert.equal(JSON.parse((await request('/api/overhead/object?id=25544')).body).found, true);
+  assert.equal(JSON.parse((await request('/api/overhead/object?id=c37162')).body).id, '37162');
+  assert.equal((await request('/api/overhead/object?id=../etc')).status, 400);
 });
 
 test('the short links open the light page', async () => {

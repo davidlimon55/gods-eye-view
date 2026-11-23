@@ -8,6 +8,10 @@ import {
   fetchUpstream,
   launchLibraryUpcomingUrl,
   validLatitude,
+  vrsRouteUrl,
+  cleanCallsign,
+  ADSB_ROUTESET_URL,
+  CELESTRAK_SATCAT_URL,
 } from './sources.js';
 
 test('only https on the listed hosts passes the SSRF guard', () => {
@@ -55,4 +59,28 @@ test('upstream fetches refuse redirects and send a descriptive User-Agent', asyn
   assert.equal(seen.options.redirect, 'error');
   assert.match(seen.options.headers['User-Agent'], /over-my-house/);
   await assert.rejects(fetchUpstream('https://example.com/', { fetchImpl: async () => new Response('') }), /not allowed/);
+});
+
+test('route and SATCAT URLs are fixed, and callsigns are checked before they reach a path', () => {
+  assert.ok(assertAllowedUpstream(ADSB_ROUTESET_URL));
+  assert.ok(assertAllowedUpstream(CELESTRAK_SATCAT_URL));
+  assert.equal(vrsRouteUrl(' dal2009 ').href, 'https://vrs-standing-data.adsb.lol/routes/DA/DAL2009.json');
+  assert.ok(assertAllowedUpstream(vrsRouteUrl('SWA1')));
+  for (const bad of ['../x', 'A', 'DAL 2009', 'ABCDEFGHI', '%2e%2e'])
+    assert.equal(cleanCallsign(bad), null, bad);
+  assert.throws(() => vrsRouteUrl('../x'), /invalid/);
+});
+
+test('POST bodies go out as JSON', async () => {
+  let seen = null;
+  await fetchUpstream(ADSB_ROUTESET_URL, {
+    json: { planes: [] },
+    fetchImpl: async (url, init) => {
+      seen = init;
+      return new Response('[]');
+    },
+  });
+  assert.equal(seen.method, 'POST');
+  assert.equal(seen.headers['Content-Type'], 'application/json');
+  assert.equal(seen.redirect, 'error');
 });

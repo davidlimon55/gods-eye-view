@@ -1,6 +1,6 @@
 /**
  * Over My House settings, kept in this browser only (localStorage): the home
- * spot, where to look from, and the text size. Nothing here is sent to the
+ * spot, where to look from, the text size and the map's show/hide filters. Nothing here is sent to the
  * server except the coordinates needed to ask for nearby planes.
  */
 
@@ -23,6 +23,26 @@ export const TEXT_SIZE_PX = Object.freeze({
   large: 21,
   xl: 25,
 });
+
+/** Show/hide groups on the sky map and in the lists (src/overhead/details.js FILTERS). */
+export const FILTER_KEYS = Object.freeze([
+  'planes',
+  'satellites',
+  'starlink',
+  'rocket',
+  'debris',
+  'classified',
+  'unidentified',
+  'planets',
+  'stars',
+]);
+
+/** A clean filter set: every known group on unless saved as false. */
+export function cleanFilters(filters) {
+  return Object.fromEntries(
+    FILTER_KEYS.map((key) => [key, filters?.[key] !== false]),
+  );
+}
 
 const DEFAULTS = Object.freeze({
   home: null,
@@ -74,6 +94,7 @@ export function readSettings(storage = safeStorage()) {
       ? saved.textSize
       : DEFAULTS.textSize,
     sizerOn: saved.sizerOn !== false,
+    filters: cleanFilters(saved.filters),
   };
 }
 
@@ -89,6 +110,7 @@ export function writeSettings(settings, storage = safeStorage()) {
           ? settings.textSize
           : DEFAULTS.textSize,
         sizerOn: settings.sizerOn !== false,
+        filters: cleanFilters(settings.filters),
       }),
     );
     return true;

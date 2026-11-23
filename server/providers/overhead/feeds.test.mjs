@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createAircraftFeed, createFeed, statusCooldownMs } from './feeds.js';
+import { createAircraftFeed, createFeed, createRouteFeed, statusCooldownMs } from './feeds.js';
 
 function memoryCache() {
   const files = new Map();
@@ -83,4 +83,82 @@ test('aircraft lookups share rounded points and respect a daily budget', async (
   assert.equal(urls.length, 2);
   assert.equal(over.state, 'STALE');
   assert.equal(feed.status().usedToday, 2);
+});
+
+const ROUTE = {
+  callsign: 'SWA100',
+  number: '100',
+  airline_code: 'SWA',
+  airport_codes: 'KDAL-KSAT',
+  plausible: true,
+  _airports: [
+    { icao: 'KDAL', iata: 'DAL', location: 'Dallas', name: 'Dallas Love Field', lat: 32.847, lon: -96.852 },
+    { icao: 'KSAT', iata: 'SAT', location: 'San Antonio', name: 'San Antonio International Airport', lat: 29.5337, lon: -98.4698 },
+  ],
+};
+
+test('routes: one POST for a callsign, cached for hours, position rounded, empty answers fall back', async () => {
+  let clock = 5_000_000;
+  const calls = [];
+  let mode = 'routeset';
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    if (url.startsWith('https://api.adsb.lol/api/0/routeset')) {
+      if (mode === 'empty') return new Response('', { status: 201 });
+      const body = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify(body.planes.map((p) => (p.callsign === 'SWA100' ? ROUTE : { callsign: p.callsign, airport_codes: 'unknown', _airports: [] }))),
+        { status: 200 },
+      );
+    }
+    if (url.startsWith('https://vrs-standing-data.adsb.lol/routes/')) {
+      if (url.endsWith('/NOPE1.json')) return new Response('missing', { status: 404 });
+      return new Response(JSON.stringify({ ...ROUTE, callsign: 'SWA200' }), { status: 200 });
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const feed = createRouteFeed({ fetchImpl, now: () => clock });
+  const plane = { callsign: 'swa100', lat: 30.1234, lon: -97.8765, track: 220 };
+  const first = await feed.lookup([plane]);
+  assert.equal(first.routes.SWA100.known, true);
+  assert.equal(first.routes.SWA100.from.city, 'Dallas');
+  assert.equal(first.routes.SWA100.to.code, 'SAT');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { planes: [{ callsign: 'SWA100', lat: 30.1, lng: -97.9 }] });
+  clock += 3 * 3600000;
+  assert.equal((await feed.lookup([plane])).state, 'HIT');
+  assert.equal(calls.length, 1);
+  // Unknown routes come back as unknown, not blank.
+  clock += 5000;
+  assert.equal((await feed.lookup([{ callsign: 'ABC9', lat: 30, lon: -98 }])).routes.ABC9.reason, 'unknown');
+  // routeset answers empty: the tapped plane's static file is read instead.
+  mode = 'empty';
+  clock += 5000;
+  const fb = await feed.lookup([{ callsign: 'SWA200', lat: 30.1, lon: -97.9, track: 220 }]);
+  assert.equal(fb.state, 'FALLBACK');
+  assert.equal(fb.routes.SWA200.known, true);
+  clock += 5000;
+  assert.equal((await feed.lookup([{ callsign: 'NOPE1', lat: 30, lon: -98 }])).routes.NOPE1.reason, 'unknown');
+  // Bad callsigns never reach a URL.
+  const before = calls.length;
+  assert.deepEqual((await feed.lookup([{ callsign: '../../x', lat: 30, lon: -98 }])).routes, {});
+  assert.equal(calls.length, before);
+});
+
+test('routes: errors back off and say the route is unavailable', async () => {
+  let clock = 1_000_000;
+  let calls = 0;
+  const feed = createRouteFeed({
+    now: () => clock,
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response('slow down', { status: 429, headers: { 'Retry-After': '120' } });
+    },
+  });
+  const a = await feed.lookup([{ callsign: 'UAL1', lat: 30, lon: -98 }]);
+  assert.equal(a.state, 'ERROR');
+  assert.equal(a.routes.UAL1.reason, 'unavailable');
+  clock += 10000;
+  assert.equal((await feed.lookup([{ callsign: 'UAL1', lat: 30, lon: -98 }])).state, 'COOLDOWN');
+  assert.equal(calls, 1);
 });

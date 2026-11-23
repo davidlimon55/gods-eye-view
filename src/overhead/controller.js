@@ -5,6 +5,8 @@
  */
 import {
   DEFAULT_HOME,
+  FILTER_KEYS,
+  cleanFilters,
   cleanHome,
   readSettings,
   writeSettings,
@@ -49,6 +51,12 @@ export function createOverMyHouse({
     aircraftState: null,
     identify: { busy: false, result: null, error: null },
     selectedId: null,
+    // Everything under the last tap, best first, so "Next" can step through
+    // dots that sit on top of each other.
+    selectedGroup: [],
+    // Extra facts for the selected thing: a plane's route, a satellite's
+    // catalog entry. {id, kind: 'route'|'object', value, loading}
+    details: null,
     searchBusy: false,
     searchError: null,
     compass: { active: false, heading: null, el: null, error: null },
@@ -442,9 +450,130 @@ export function createOverMyHouse({
     }
   }
 
-  function select(id) {
-    state.selectedId = id || null;
+  const objectInfo = new Map();
+  const routeInfo = new Map();
+  const ROUTE_KEEP_MS = 10 * 60000;
+
+  function findInSky(id) {
+    return (
+      (state.sky?.aircraft ?? []).find((o) => o.id === id) ||
+      (state.sky?.objects ?? []).find((o) => o.id === id) ||
+      null
+    );
+  }
+
+  async function loadDetails(id) {
+    const thing = findInSky(id);
+    if (!thing) {
+      state.details = null;
+      return;
+    }
+    if (thing.kind === 'aircraft') {
+      const callsign = String(thing.callsign || '').trim();
+      if (!callsign || !Number.isFinite(thing.lat)) {
+        state.details = {
+          id,
+          kind: 'route',
+          value: { known: false, reason: 'nocallsign' },
+        };
+        emit();
+        return;
+      }
+      const hit = routeInfo.get(callsign);
+      if (hit && now() - hit.at < ROUTE_KEEP_MS) {
+        state.details = { id, kind: 'route', value: hit.value };
+        emit();
+        return;
+      }
+      state.details = { id, kind: 'route', value: null, loading: true };
+      emit();
+      let value = { known: false, reason: 'unavailable' };
+      try {
+        const track = Number.isFinite(thing.track)
+          ? `&track=${Math.round(thing.track)}`
+          : '';
+        const data = await getJson(
+          `/api/overhead/routes?cs=${encodeURIComponent(callsign)}&lat=${thing.lat.toFixed(1)}&lon=${thing.lon.toFixed(1)}${track}`,
+        );
+        value = data?.route ?? value;
+        // Only keep answers that came from adsb.lol, not "try later".
+        if (value.reason !== 'unavailable')
+          routeInfo.set(callsign, { at: now(), value });
+      } catch {
+        /* say "Route not known" */
+      }
+      if (state.selectedId === id) {
+        state.details = { id, kind: 'route', value };
+        emit();
+      }
+      return;
+    }
+    const number = String(id).replace(/^c/, '');
+    if (!/^\d{1,9}$/.test(number)) {
+      state.details = null;
+      emit();
+      return;
+    }
+    if (objectInfo.has(number)) {
+      state.details = { id, kind: 'object', value: objectInfo.get(number) };
+      emit();
+      return;
+    }
+    state.details = { id, kind: 'object', value: null, loading: true };
     emit();
+    let value = { found: false, loaded: false };
+    try {
+      value = await getJson(`/api/overhead/object?id=${number}`);
+      if (value?.loaded) objectInfo.set(number, value);
+    } catch {
+      /* the card still shows what the orbit maths knows */
+    }
+    if (state.selectedId === id) {
+      state.details = { id, kind: 'object', value };
+      emit();
+    }
+  }
+
+  /**
+   * Select a thing on the map. `id` may be a list of ids (everything under
+   * the finger, best first); the first is selected and the rest can be
+   * stepped through with selectNext().
+   */
+  function select(id) {
+    const ids = (Array.isArray(id) ? id : [id]).filter(Boolean).map(String);
+    if (Array.isArray(id) || !state.selectedGroup.includes(String(id)))
+      state.selectedGroup = Array.isArray(id) ? ids : [];
+    state.selectedId = ids[0] ?? null;
+    state.details = null;
+    emit();
+    if (state.selectedId) void loadDetails(state.selectedId);
+  }
+
+  /** Step to the next thing under the last tap. */
+  function selectNext() {
+    const group = state.selectedGroup;
+    if (group.length < 2) return;
+    const at = group.indexOf(state.selectedId);
+    state.selectedId = group[(at + 1) % group.length];
+    state.details = null;
+    emit();
+    void loadDetails(state.selectedId);
+  }
+
+  function setFilter(key, on) {
+    if (!FILTER_KEYS.includes(key)) return;
+    state.settings.filters = cleanFilters({
+      ...state.settings.filters,
+      [key]: Boolean(on),
+    });
+    save();
+  }
+
+  function setAllFilters(on) {
+    state.settings.filters = Object.fromEntries(
+      FILTER_KEYS.map((key) => [key, Boolean(on)]),
+    );
+    save();
   }
 
   const onVisibility = () => {
@@ -468,6 +597,9 @@ export function createOverMyHouse({
     startCompass,
     stopCompass,
     select,
+    selectNext,
+    setFilter,
+    setAllFilters,
     destroy() {
       destroyed = true;
       stopCompass();

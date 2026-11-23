@@ -13,6 +13,7 @@ import { TEXT_SIZE_PX } from '../../../../overhead/settings.js';
 import { localPosition } from '../../../../overhead/sky.js';
 import { wording, directionWord, clock, dayClock, miles } from '../../../../overhead/words.js';
 import { createVoiceInput } from '../../../../overhead/voice.js';
+import { FILTERS, filterCounts, filterOf, objectDetails, planeDetails } from '../../../../overhead/details.js';
 
 // The Over My House panel. Everything shown is plain English (see
 // src/overhead/words.js). The owner (src/overhead/controller.js) holds the
@@ -80,11 +81,23 @@ function brightness(mag) {
 const kindWord = (kind) =>
   kind === 'aircraft' ? 'Plane' : kind === 'planet' ? 'Planet' : kind === 'star' ? 'Star' : kind === 'moon' ? 'Moon' : kind === 'launch' ? 'Rocket launch' : KIND_LABELS[kind] ?? 'Satellite';
 
-const visibleNow = computed(() => (sky.value?.objects ?? []).filter((o) => o.visible));
+// ---- Show / hide filters (kept in this browser) ----
+const filters = computed(() => settings.value.filters ?? {});
+const shown = (thing) => filters.value[filterOf(thing)] !== false;
+const allShown = computed(() => FILTERS.every((f) => filters.value[f.id] !== false));
+const counts = computed(() => filterCounts(sky.value));
+function toggleFilter(id) {
+  props.controls.setFilter(id, filters.value[id] === false);
+}
+function toggleAll() {
+  props.controls.setAllFilters(!allShown.value);
+}
+
+const visibleNow = computed(() => (sky.value?.objects ?? []).filter((o) => o.visible && shown(o)));
 const showAllVisible = ref(false);
 const listedVisible = computed(() => (showAllVisible.value ? visibleNow.value.slice(0, 60) : visibleNow.value.slice(0, 8)));
-const planesNow = computed(() => (sky.value?.aircraft ?? []).slice().sort((a, b) => b.el - a.el).slice(0, 8));
-const planetsUp = computed(() => (sky.value?.planets ?? []).filter((p) => p.el > 0));
+const planesNow = computed(() => (filters.value.planes === false ? [] : (sky.value?.aircraft ?? [])).slice().sort((a, b) => b.el - a.el).slice(0, 8));
+const planetsUp = computed(() => (filters.value.planets === false ? [] : (sky.value?.planets ?? []).filter((p) => p.el > 0)));
 const selected = computed(() => {
   const id = v.value.selectedId;
   if (!id) return null;
@@ -95,6 +108,22 @@ const selected = computed(() => {
     null
   );
 });
+const details = computed(() => (v.value.details && v.value.details.id === v.value.selectedId ? v.value.details : null));
+const card = computed(() => {
+  const thing = selected.value;
+  if (!thing) return null;
+  if (thing.kind === 'aircraft' && 'callsign' in thing) return { plane: true, ...planeDetails(thing, details.value?.loading ? null : (details.value?.value ?? null)) };
+  if (Object.hasOwn(KIND_LABELS, thing.kind) && 'sunlit' in thing) {
+    const info = details.value?.loading ? null : (details.value?.value ?? null);
+    return { plane: false, ...objectDetails(thing, info, { darkness: sky.value?.sun?.darkness }), loading: Boolean(details.value?.loading) };
+  }
+  return null;
+});
+const othersHere = computed(() => {
+  const group = v.value.selectedGroup ?? [];
+  return group.includes(v.value.selectedId) ? group.length - 1 : 0;
+});
+const rowName = (o) => (o.kind === 'analyst' || o.kind === 'unknown') && (!o.name || /^Object \d+$/.test(o.name)) ? 'Not identified' : o.name;
 
 // ---- What was that? ----
 const ask = reactive({
@@ -258,13 +287,25 @@ watch(
       <summary>Right now</summary>
       <details class="omh-tip">
         <summary>How this works</summary>
-        <p>The circle is your sky. The middle is straight up. The edge is the horizon. North is at the top, like a map. Green dots are satellites you could see now. Pink dots are secret satellites that hobbyists track. Gray dots are up there but too dark or dim to see. Orange arrows are planes. Satellites shine because the Sun lights them while your sky is dark.</p>
+        <p>The circle is your sky. The middle is straight up. The edge is the horizon. North is at the top, like a map. Green dots are satellites you could see now. Light blue dots are space stations. Pink dots are classified satellites that amateur observers track. Gray dots are up there but too dark or dim to see. Orange arrows are planes. Satellites shine because the Sun lights them while your sky is dark. Tap any dot, even a gray one, to see what it is. Use the buttons above the map to show or hide each kind.</p>
       </details>
       <p class="omh-note">{{ darkWords[sky?.sun?.darkness] ?? 'Working out your sky…' }}</p>
       <p v-if="sky" class="omh-count">
         {{ w('{seen} you could see now · {up} up there in total · {planes}', { seen: sky.counts.seeable, up: sky.counts.above, planes: sky.counts.aircraft === 1 ? '1 plane nearby' : w('{n} planes nearby', { n: sky.counts.aircraft }) }) }}
       </p>
+      <div class="omh-filters" role="group" aria-label="Show on the map">
+        <UiButton class="omh-chip omh-chip-all" :pressed="allShown" @click="toggleAll()">All</UiButton>
+        <UiButton
+          v-for="f in FILTERS"
+          :key="f.id"
+          class="omh-chip"
+          :pressed="filters[f.id] !== false"
+          @click="toggleFilter(f.id)"
+        >{{ f.label }} <span class="omh-chip-n">{{ counts[f.id] }}</span></UiButton>
+      </div>
+      <UiButton v-if="!allShown" variant="action" class="omh-more" @click="props.controls.setAllFilters(true)">Show all</UiButton>
       <SkyChart
+        :filters="filters"
         :sky="sky"
         :matches="result?.candidates ?? []"
         :selected-id="v.selectedId"
@@ -272,28 +313,48 @@ watch(
         label="Map of your sky. North is up and the middle is straight overhead."
         @select="(id) => props.controls.select(id)"
       />
-      <p class="omh-note omh-legend">The middle is straight overhead. The edge is the horizon. Orange arrows are planes. Green and gray dots are satellites (gray ones are too dim to see). Yellow dots are planets. Pinch or tap + to zoom, and tap a dot to see what it is.</p>
-      <div v-if="selected" class="omh-card">
-        <strong>{{ selected.name }}</strong>
-        <span>{{ kindWord(selected.kind) }} · {{ where(selected.az, selected.el) }}</span>
-        <span v-if="Number.isFinite(selected.heightKm)">{{ w('About {mi} mi up', { mi: miles(selected.heightKm) }) }}</span>
-        <span v-if="Number.isFinite(selected.altitudeFt)">{{ w('{feet} ft up, {mi} mi away', { feet: selected.altitudeFt, mi: miles(selected.distanceKm) }) }}</span>
+      <p class="omh-note omh-legend">The middle is straight overhead. The edge is the horizon. Orange arrows are planes. Green dots are satellites you can see now, light blue are space stations, pink are classified satellites, and gray dots are too dim to see. Yellow dots are planets. Pinch or tap + to zoom. Tap any dot to see what it is.</p>
+      <div v-if="selected" class="omh-card" aria-live="polite">
+        <template v-if="card">
+          <strong class="omh-card-title">{{ card.title }}</strong>
+          <span>{{ card.plane ? 'Plane' : kindWord(selected.kind) }} · {{ where(selected.az, selected.el) }}</span>
+          <span v-if="card.plane && Number.isFinite(selected.altitudeFt)">{{ w('{feet} ft up, {mi} mi away', { feet: selected.altitudeFt, mi: miles(selected.distanceKm) }) }}</span>
+          <p v-if="card.unidentified && card.plane" class="omh-note">{{ w('Not identified: {why}', { why: card.reason }) }}</p>
+          <dl class="omh-facts">
+            <div v-for="[label, value] in card.lines" :key="label" class="omh-fact">
+              <dt>{{ label }}</dt>
+              <dd>{{ value }}</dd>
+            </div>
+          </dl>
+          <p v-if="card.loading" class="omh-note">Looking it up in the satellite catalog…</p>
+          <a v-if="card.mapUrl" class="omh-link" :href="card.mapUrl" target="_blank" rel="noopener">See it on the adsb.lol map</a>
+          <a v-if="card.moreUrl" class="omh-link" :href="card.moreUrl" target="_blank" rel="noopener">More about it (N2YO)</a>
+        </template>
+        <template v-else>
+          <strong>{{ selected.name }}</strong>
+          <span>{{ kindWord(selected.kind) }} · {{ where(selected.az, selected.el) }}</span>
+          <span v-if="Number.isFinite(selected.heightKm)">{{ w('About {mi} mi up', { mi: miles(selected.heightKm) }) }}</span>
+        </template>
+        <div v-if="othersHere > 0" class="omh-others">
+          <span>{{ othersHere === 1 ? '1 other object here' : w('{n} other objects here', { n: othersHere }) }}</span>
+          <UiButton variant="action" class="omh-more" @click="props.controls.selectNext()">Show the next one</UiButton>
+        </div>
       </div>
       <ul v-if="listedVisible.length" class="omh-list">
         <li v-for="o in listedVisible" :key="o.id">
           <UiButton class="omh-row" @click="props.controls.select(o.id)">
-            <strong>{{ o.name }}</strong>
+            <strong>{{ rowName(o) }}</strong>
             <span>{{ kindWord(o.kind) }} · {{ where(o.az, o.el) }} · {{ brightness(o.mag) }}<template v-if="Number.isFinite(o.heading)"> · {{ w('moving toward the {dir}', { dir: directionWord(compassPoint(o.heading)) }) }}</template></span>
           </UiButton>
         </li>
       </ul>
-      <p v-else-if="sky" class="omh-note">Nothing bright enough to see is up right now.</p>
+      <p v-else-if="sky" class="omh-note">{{ allShown ? 'Nothing bright enough to see is up right now.' : 'Nothing you could see right now in the kinds you picked.' }}</p>
       <UiButton v-if="visibleNow.length > 8" variant="action" class="omh-more" @click="showAllVisible = !showAllVisible">{{ showAllVisible ? 'Show fewer' : w('Show all {n}', { n: visibleNow.length }) }}</UiButton>
       <details v-if="planesNow.length || planetsUp.length" class="omh-sub">
         <summary>Planes and planets up now</summary>
         <ul class="omh-list">
           <li v-for="p in planesNow" :key="p.id" class="omh-plain">
-            <strong>{{ w('Plane {name}', { name: p.name }) }}</strong>
+            <strong>{{ w('Plane {name}', { name: planeDetails(p, { known: false }).title }) }}</strong>
             <span>{{ where(p.az, p.el) }} · {{ w('{feet} ft, {mi} mi away', { feet: p.altitudeFt, mi: miles(p.distanceKm) }) }}<template v-if="p.type"> · {{ p.type }}</template></span>
           </li>
           <li v-for="p in planetsUp" :key="p.id" class="omh-plain">
@@ -449,7 +510,7 @@ watch(
       <summary>Settings</summary>
       <details class="omh-tip">
         <summary>How this works</summary>
-        <p>Your home spot stays on this phone or computer only. The app sends only a rounded location (about half a mile) to look up planes near you.</p>
+        <p>Your home spot stays on this phone or computer only. The app sends only a rounded location (about half a mile) to look up planes near you. When you tap a plane, it sends that plane’s flight number to look up its route.</p>
       </details>
       <h2 class="omh-q">Look up from</h2>
       <UiSegmented v-model="lookFrom" :options="lookFromOptions" label="Look up from" keyboard="radio" class="omh-seg omh-wrap" />
@@ -468,8 +529,10 @@ watch(
         <summary>Where the data comes from</summary>
         <ul class="omh-reasons">
           <li>Satellites, rocket stages and space junk: <a class="omh-link" href="https://celestrak.org/" target="_blank" rel="noopener">CelesTrak</a> (US Space Force data).</li>
-          <li>Secret satellites: <a class="omh-link" href="https://www.mmccants.org/tles/index.html" target="_blank" rel="noopener">Mike McCants’ hobbyist tracking</a>.</li>
-          <li>Planes: <a class="omh-link" href="https://www.adsb.lol/" target="_blank" rel="noopener">adsb.lol</a> (ODbL).</li>
+          <li>Owner, launch date and launch site: <a class="omh-link" href="https://celestrak.org/satcat/search.php" target="_blank" rel="noopener">CelesTrak satellite catalog (SATCAT)</a>.</li>
+          <li>Classified satellites: <a class="omh-link" href="https://www.mmccants.org/tles/index.html" target="_blank" rel="noopener">Mike McCants’ amateur tracking</a>.</li>
+          <li>Planes and flight routes: <a class="omh-link" href="https://www.adsb.lol/" target="_blank" rel="noopener">adsb.lol</a> (ODbL). Routes come from <a class="omh-link" href="https://github.com/vradarserver/standing-data" target="_blank" rel="noopener">Virtual Radar Server standing data</a> and can be wrong.</li>
+          <li>Airline and plane names come from a small list built into this page.</li>
           <li>Launches: <a class="omh-link" href="https://thespacedevs.com/llapi" target="_blank" rel="noopener">Launch Library 2</a>.</li>
           <li>Fireballs: <a class="omh-link" href="https://cneos.jpl.nasa.gov/fireballs/" target="_blank" rel="noopener">NASA/JPL CNEOS</a>.</li>
           <li v-if="v.catalog">{{ w('{n} objects loaded.', { n: v.catalog.total }) }}</li>
@@ -648,6 +711,49 @@ watch(
 }
 .omh-more {
   margin: 0.4em 0;
+}
+.omh-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  margin: 0.5em 0;
+}
+.omh :deep(.omh-chip) {
+  border-radius: 999px;
+  padding: 0.3em 0.9em;
+}
+.omh-chip-n {
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+.omh-card-title {
+  font-size: 1.1em;
+}
+.omh-facts {
+  margin: 0.4em 0 0.2em;
+  display: grid;
+  gap: 0.25em;
+}
+.omh-fact {
+  display: grid;
+  grid-template-columns: minmax(7em, 32%) 1fr;
+  gap: 0.6em;
+}
+.omh-fact dt {
+  color: #9fd3ff;
+  font-weight: 600;
+}
+.omh-fact dd {
+  margin: 0;
+}
+.omh-others {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6em;
+  margin-top: 0.4em;
+  padding-top: 0.4em;
+  border-top: 1px solid #2a3558;
 }
 .omh-compass {
   display: grid;

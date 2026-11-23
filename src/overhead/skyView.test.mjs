@@ -79,3 +79,18 @@ test('compass letters stay on their own side when zoomed', () => {
     assert.ok(x >= 0 && x <= size && y >= 0 && y <= size);
   }
 });
+
+test('a tap on a crowded spot lists every dot under it, bright and near first, gray ones included', async () => {
+  const { pointsNear } = await import('./skyView.js');
+  const points = [
+    { id: 'gray-close', x: 100, y: 100, tier: 1, mag: 7 },
+    { id: 'bright', x: 110, y: 100, tier: 0, mag: 2 },
+    { id: 'brighter', x: 112, y: 100, tier: 0, mag: 1 },
+    { id: 'far', x: 200, y: 200, tier: 0, mag: 0 },
+    { id: 'bright', x: 110, y: 101, tier: 0, mag: 2 },
+  ];
+  assert.deepEqual(pointsNear(points, 100, 100).map((p) => p.id), ['brighter', 'bright', 'gray-close']);
+  // A lone gray dot can be tapped.
+  assert.deepEqual(pointsNear([{ id: 'g', x: 50, y: 50, tier: 1 }], 60, 55).map((p) => p.id), ['g']);
+  assert.deepEqual(pointsNear(points, 400, 400), []);
+});

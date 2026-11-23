@@ -62,6 +62,9 @@ function controls() {
     startCompass: record('startCompass'),
     stopCompass: record('stopCompass'),
     select: record('select'),
+    selectNext: record('selectNext'),
+    setFilter: record('setFilter'),
+    setAllFilters: record('setAllFilters'),
   };
 }
 
@@ -73,7 +76,7 @@ test('the panel shows the sky in plain words with large tap targets and text siz
   assert.match(wrapper.text(), /ISS \(ZARYA\)/);
   assert.match(wrapper.text(), /How this works/);
   // A plain line under the map says what the marks mean.
-  assert.match(wrapper.get('.omh-legend').text(), /middle is straight overhead.*edge is the horizon.*Orange arrows are planes.*gray dots are satellites.*Yellow dots are planets/);
+  assert.match(wrapper.get('.omh-legend').text(), /middle is straight overhead.*edge is the horizon.*Orange arrows are planes.*Green dots are satellites.*gray dots are too dim.*Yellow dots are planets.*Tap any dot/);
   // Distances are miles; the launch here is about 1,000 miles away.
   assert.match(wrapper.text(), /\d+ mi to the east/);
   assert.doesNotMatch(wrapper.text(), /\bkm\b/);
@@ -134,4 +137,66 @@ test('the selected thing shows its height in miles', () => {
   const wrapper = mount(Panel, { props: { view: view({ selectedId: '25544' }), controls: controls() } });
   assert.match(wrapper.get('.omh-card').text(), /About 261 mi up/);
   wrapper.unmount();
+});
+
+const PLANE = { id: 'ac-a40ca4', kind: 'aircraft', name: 'DAL2009', hex: 'a40ca4', callsign: 'DAL2009', reg: 'N360DN', type: 'A321', desc: '', az: 70, el: 20, distanceKm: 8, altitudeFt: 2300, track: 40, speedKt: 197, verticalFpm: -384, lat: 29.44, lon: -98.55 };
+
+test('a tapped plane shows airline, flight, route, type, registration, speed, heading and a map link', () => {
+  const sky = { ...view().sky, aircraft: [PLANE], counts: { above: 1, seeable: 1, aircraft: 1, total: 3 } };
+  const route = { known: true, from: { code: 'ATL', city: 'Atlanta' }, to: { code: 'SAT', city: 'San Antonio' } };
+  const wrapper = mount(Panel, { props: { view: view({ sky, selectedId: PLANE.id, details: { id: PLANE.id, kind: 'route', value: route } }), controls: controls() } });
+  const text = wrapper.get('.omh-card').text();
+  for (const want of ['Delta Air Lines flight 2009', 'Atlanta (ATL) → San Antonio (SAT)', 'Airbus A321', 'N360DN', '227 mph', 'Flying toward the northeast', 'Descending', '2300 ft up'])
+    assert.ok(text.includes(want), want);
+  const link = wrapper.get('.omh-card a');
+  assert.equal(link.attributes('href'), 'https://globe.adsb.lol/?icao=a40ca4');
+  assert.equal(link.attributes('target'), '_blank');
+  wrapper.unmount();
+  const unknown = mount(Panel, { props: { view: view({ sky, selectedId: PLANE.id, details: { id: PLANE.id, kind: 'route', value: { known: false, reason: 'implausible' } } }), controls: controls() } });
+  assert.match(unknown.get('.omh-card').text(), /Route not known/);
+  unknown.unmount();
+});
+
+test('a tapped satellite shows its catalog facts, and crowded spots offer the next one', async () => {
+  const iss = { ...view().sky.objects[0], speedKms: 7.66, sunlit: true };
+  const sky = { ...view().sky, objects: [iss, { id: '81001', name: '', kind: 'analyst', az: 46, el: 50, visible: false, sunlit: false, heightKm: 800 }] };
+  const info = { found: true, loaded: true, type: 'PAY', status: '+', owner: 'ISS', launchDate: '1998-11-20', launchSite: 'TYMSC' };
+  const c = controls();
+  const wrapper = mount(Panel, {
+    props: { view: view({ sky, selectedId: '25544', selectedGroup: ['25544', '81001'], details: { id: '25544', kind: 'object', value: info } }), controls: c },
+  });
+  const text = wrapper.get('.omh-card').text();
+  for (const want of ['NORAD 25544', 'November 20, 1998, from Baikonur, Kazakhstan', 'About 261 mi up', 'About 17,100 mph', 'In sunlight', '1 other object here'])
+    assert.ok(text.includes(want), want);
+  assert.equal(wrapper.get('.omh-card a').attributes('href'), 'https://www.n2yo.com/satellite/?s=25544');
+  await wrapper.findAll('button').find((b) => b.text() === 'Show the next one').trigger('click');
+  assert.ok(c.calls.some((call) => call[0] === 'selectNext'));
+  wrapper.unmount();
+  const gray = mount(Panel, { props: { view: view({ sky, selectedId: '81001' }), controls: controls() } });
+  const grayText = gray.get('.omh-card').text();
+  assert.match(grayText, /Not identified/);
+  assert.match(grayText, /analyst object/);
+  assert.match(grayText, /Earth’s shadow/);
+  gray.unmount();
+});
+
+test('filter chips show counts, turn groups off, and Show all resets', async () => {
+  const c = controls();
+  const wrapper = mount(Panel, { props: { view: view(), controls: c } });
+  const chips = wrapper.findAll('.omh-filters button');
+  assert.deepEqual(chips.map((b) => b.text().replace(/\s+\d+$/, '')), ['All', 'Planes', 'Satellites (working)', 'Starlink', 'Rocket bodies', 'Debris', 'Classified', 'Not identified', 'Planets and Moon', 'Stars']);
+  assert.match(chips[2].text(), /Satellites \(working\)\s+1/);
+  assert.equal(chips[0].attributes('aria-pressed'), 'true');
+  await chips[7].trigger('click');
+  assert.deepEqual(c.calls.find((call) => call[0] === 'setFilter'), ['setFilter', 'unidentified', false]);
+  await chips[0].trigger('click');
+  assert.deepEqual(c.calls.find((call) => call[0] === 'setAllFilters'), ['setAllFilters', false]);
+  wrapper.unmount();
+  const only = Object.fromEntries(['planes', 'satellites', 'starlink', 'rocket', 'debris', 'classified', 'unidentified', 'planets', 'stars'].map((k) => [k, k === 'unidentified']));
+  const filtered = mount(Panel, { props: { view: view({ settings: { home: null, observer: 'home', textSize: 'normal', sizerOn: true, filters: only } }), controls: c } });
+  assert.doesNotMatch(filtered.get('.omh-list').exists() ? filtered.get('.omh-list').text() : '', /ISS/);
+  const showAll = filtered.findAll('button').find((b) => b.text() === 'Show all');
+  await showAll.trigger('click');
+  assert.deepEqual(c.calls.filter((call) => call[0] === 'setAllFilters').pop(), ['setAllFilters', true]);
+  filtered.unmount();
 });

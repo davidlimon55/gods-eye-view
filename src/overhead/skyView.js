@@ -69,6 +69,32 @@ export function nearestPoint(points, x, y, radius = HIT_RADIUS) {
 }
 
 /**
+ * Every point within `radius` of (x, y), best first, for taps on crowded
+ * spots. Brighter marks win (`tier` 0: things you can see, planes, planets;
+ * 1: dim gray dots), then the nearer one (in 8px steps, so a finger that is
+ * a little off still gets the bright dot), then the brighter magnitude.
+ * Duplicate ids (a match ring on top of its dot) are listed once.
+ */
+export function pointsNear(points, x, y, radius = HIT_RADIUS) {
+  const seen = new Map();
+  for (const point of points) {
+    const d = Math.hypot(point.x - x, point.y - y);
+    if (d > radius) continue;
+    const prev = seen.get(point.id);
+    const tier = point.tier ?? 0;
+    if (!prev || tier < prev.tier || (tier === prev.tier && d < prev.d))
+      seen.set(point.id, { ...point, d, tier });
+  }
+  return [...seen.values()].sort(
+    (a, b) =>
+      a.tier - b.tier ||
+      Math.floor(a.d / 8) - Math.floor(b.d / 8) ||
+      (a.mag ?? 99) - (b.mag ?? 99) ||
+      a.d - b.d,
+  );
+}
+
+/**
  * Where to draw a compass letter: at the horizon point in its direction,
  * pulled inside the canvas (by `margin`) when zoom pushes it off screen.
  * Pulling in along one axis keeps the letter on the correct side, so N is

@@ -7,17 +7,21 @@ import {
   TAP_SLOP,
   clampView,
   compassLetterAt,
-  nearestPoint,
+  pointsNear,
   toScreen,
   zoomAbout,
 } from '../../../../overhead/skyView.js';
+import { filterOf } from '../../../../overhead/details.js';
 
 // A round map of the sky over the house, drawn on a canvas: the centre is
 // straight overhead, the edge is the horizon, north is up and east is to the
 // right (like a map lying on the ground). Bright dots are things you could
 // see now; faint grey dots are up there but dark or too dim; orange arrows
 // are planes. Numbered rings mark "What was that?" matches. Tapping near a
-// dot selects the nearest one, which gets a white ring.
+// dot selects it (gray ones too) and gets a white ring; when several sit
+// under the finger, the brightest and nearest comes first and the rest are
+// passed along so the card can step through them. The show/hide filters
+// (`filters`) hide whole groups from the drawing and from taps.
 //
 // Zoom: pinch, the mouse wheel, or the + / − buttons; drag (one finger or
 // the mouse) pans once zoomed in. At 1x a one-finger drag is left to the
@@ -29,7 +33,10 @@ const props = defineProps({
   /** The direction the person said they looked, as a bearing, or null. */
   lookAz: { type: Number, default: null },
   label: { type: String, required: true },
+  /** Show/hide groups by filter id (src/overhead/details.js); missing means shown. */
+  filters: { type: Object, default: () => ({}) },
 });
+const shown = (thing) => props.filters?.[filterOf(thing)] !== false;
 const emit = defineEmits(['select']);
 const canvas = ref(null);
 const frame = ref(null);
@@ -154,7 +161,7 @@ function draw() {
 function drawSky(ctx, cx, cy, r) {
   const sky = props.sky;
   if (!sky) return;
-  for (const star of sky.stars ?? []) {
+  for (const star of props.filters?.stars === false ? [] : (sky.stars ?? [])) {
     const [x, y] = project(star.az, star.el, cx, cy, r);
     ctx.fillStyle = 'rgba(220,230,255,0.75)';
     ctx.beginPath();
@@ -162,7 +169,8 @@ function drawSky(ctx, cx, cy, r) {
     ctx.fill();
   }
   ctx.font = '13px system-ui, sans-serif';
-  for (const planet of sky.planets ?? []) {
+  const planetsOn = props.filters?.planets !== false;
+  for (const planet of planetsOn ? (sky.planets ?? []) : []) {
     if (planet.el < 0) continue;
     const [x, y] = project(planet.az, planet.el, cx, cy, r);
     ctx.fillStyle = '#ffe08a';
@@ -170,9 +178,9 @@ function drawSky(ctx, cx, cy, r) {
     ctx.arc(x, y, 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillText(planet.name, x, y - 12);
-    points.push({ id: `planet-${planet.name}`, x, y });
+    points.push({ id: `planet-${planet.name}`, x, y, tier: 0, mag: planet.mag });
   }
-  if (sky.moon && sky.moon.el > 0) {
+  if (planetsOn && sky.moon && sky.moon.el > 0) {
     const [x, y] = project(sky.moon.az, sky.moon.el, cx, cy, r);
     ctx.fillStyle = '#f4f1de';
     ctx.beginPath();
@@ -181,17 +189,17 @@ function drawSky(ctx, cx, cy, r) {
     ctx.fillStyle = '#fff';
     ctx.fillText('Moon', x, y - 16);
   }
-  // Up there but not lit or too faint: small grey dots (capped for speed).
-  let faint = 0;
+  // Up there but not lit or too faint: small grey dots. Every one can be
+  // tapped (tier 1, so a bright dot on the same spot wins the tap).
   for (const object of sky.objects ?? []) {
-    if (object.visible || faint > 500) continue;
-    faint += 1;
+    if (object.visible || !shown(object)) continue;
     const [x, y] = project(object.az, object.el, cx, cy, r);
-    ctx.fillStyle = 'rgba(160,170,190,0.45)';
-    ctx.fillRect(x - 1, y - 1, 2, 2);
+    ctx.fillStyle = 'rgba(170,180,200,0.6)';
+    ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
+    points.push({ id: object.id, x, y, tier: 1, mag: object.mag });
   }
   for (const object of sky.objects ?? []) {
-    if (!object.visible) continue;
+    if (!object.visible || !shown(object)) continue;
     const [x, y] = project(object.az, object.el, cx, cy, r);
     const selected = object.id === props.selectedId;
     ctx.fillStyle = object.kind === 'classified' ? '#ff7bd5' : object.kind === 'station' ? '#7df9ff' : '#8dff8a';
@@ -211,9 +219,9 @@ function drawSky(ctx, cx, cy, r) {
       ctx.fillStyle = '#fff';
       ctx.fillText(object.name, x, y - 14);
     }
-    points.push({ id: object.id, x, y });
+    points.push({ id: object.id, x, y, tier: 0, mag: object.mag });
   }
-  for (const plane of sky.aircraft ?? []) {
+  for (const plane of props.filters?.planes === false ? [] : (sky.aircraft ?? [])) {
     const [x, y] = project(plane.az, plane.el, cx, cy, r);
     const a = (((plane.track ?? 0) * Math.PI) / 180);
     ctx.save();
@@ -227,7 +235,7 @@ function drawSky(ctx, cx, cy, r) {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
-    points.push({ id: plane.id, x, y });
+    points.push({ id: plane.id, x, y, tier: 0, mag: -1 });
   }
   props.matches.forEach((match, index) => {
     if (!Number.isFinite(match.az) || !Number.isFinite(match.el)) return;
@@ -240,10 +248,16 @@ function drawSky(ctx, cx, cy, r) {
     ctx.fillStyle = '#ffd166';
     ctx.font = 'bold 14px system-ui, sans-serif';
     ctx.fillText(String(index + 1), x + 18, y - 12);
-    points.push({ id: match.id, x, y });
+    points.push({ id: match.id, x, y, tier: 0, mag: match.mag ?? 0 });
   });
   // The selected thing gets a white ring (with a dark edge for contrast).
   const picked = props.selectedId ? points.find((p) => p.id === props.selectedId) : null;
+  const pickedObject = picked ? (sky.objects ?? []).find((o) => o.id === picked.id && !o.visible) : null;
+  if (pickedObject) {
+    ctx.fillStyle = '#fff';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText(pickedObject.name || 'Not identified', picked.x, picked.y - 22);
+  }
   if (picked) {
     ctx.lineWidth = 5;
     ctx.strokeStyle = 'rgba(0,0,0,0.8)';
@@ -340,8 +354,8 @@ function onPointerUp(event) {
   }
   if (!g || g.kind !== 'tap' || g.moved || !at || pointers.size) return;
   if (event.type === 'pointercancel') return;
-  const best = nearestPoint(points, at.x, at.y, HIT_RADIUS);
-  emit('select', best?.id ?? null);
+  const near = pointsNear(points, at.x, at.y, HIT_RADIUS);
+  emit('select', near.length ? near.map((p) => p.id) : null);
 }
 
 function onWheel(event) {
@@ -438,6 +452,7 @@ onBeforeUnmount(() => {
   }
 });
 watch(() => [props.sky, props.matches, props.selectedId, props.lookAz], schedule);
+watch(() => ({ ...props.filters }), schedule);
 </script>
 
 <template>

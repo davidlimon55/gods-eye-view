@@ -24,13 +24,17 @@ const EARTH_RADIUS_KM = 6378.137;
 /** Plain-word labels for object kinds (English; the UI translates). */
 export const KIND_LABELS = Object.freeze({
   station: 'Space station',
-  starlink: 'Starlink satellite',
+  starlink: 'Starlink internet satellite (SpaceX)',
   payload: 'Satellite',
-  rocket: 'Old rocket stage',
+  rocket: 'Old rocket stage (rocket body)',
   debris: 'Space junk (debris)',
-  classified: 'Secret satellite (tracked by hobbyists)',
-  analyst: 'Unnamed tracked object',
+  classified: 'Classified satellite, tracked by amateur observers',
+  analyst: 'Not identified',
+  unknown: 'Not identified',
 });
+
+/** Kinds the page calls "Not identified". */
+export const UNIDENTIFIED_KINDS = Object.freeze(['analyst', 'unknown']);
 
 /** Column order of the compact rows the server sends (see server/providers/overhead). */
 export const OMM_ROW_FIELDS = Object.freeze([
@@ -49,7 +53,8 @@ export const OMM_ROW_FIELDS = Object.freeze([
   'MEAN_MOTION_DOT',
   'MEAN_MOTION_DDOT',
   // 'b' when the object is on CelesTrak's ~100 brightest list, 'r' when it
-  // was launched in the last 30 days (both optional).
+  // was launched in the last 30 days, 'u' when the SATCAT lists its type as
+  // unknown, 'n' when the SATCAT does not list it (all optional).
   'FLAGS',
 ]);
 
@@ -155,6 +160,7 @@ export function objectFromOmmRow(row) {
     epochMs,
     recent,
     bright: flags.includes('b'),
+    noCatalog: flags.includes('n'),
     mmPerDay: Number(omm.MEAN_MOTION),
     stdMag: standardMagnitude(omm.OBJECT_NAME, kind, {
       brightList: flags.includes('b'),
@@ -262,6 +268,9 @@ export function lookAt(object, observer, ms, cache = {}) {
   }
   const eci = pv?.position;
   if (!eci || !Number.isFinite(eci.x)) return null;
+  const vel = pv?.velocity;
+  const speedKms =
+    vel && Number.isFinite(vel.x) ? Math.hypot(vel.x, vel.y, vel.z) : null;
   const gmst = cache.gmst ?? gstime(date);
   const ecf = eciToEcf(eci, gmst);
   const look = ecfToLookAngles(observer.gd, ecf);
@@ -289,6 +298,7 @@ export function lookAt(object, observer, ms, cache = {}) {
     sunlit,
     mag,
     eci,
+    speedKms,
     heightKm: Math.hypot(eci.x, eci.y, eci.z) - EARTH_RADIUS_KM,
   };
 }

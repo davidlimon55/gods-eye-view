@@ -4,9 +4,11 @@ import { deflateRawSync } from 'node:zlib';
 import {
   compactFireballs,
   compactLaunches,
+  compactRoute,
   extractZipEntry,
   mergeGroups,
   parseGpCsv,
+  parseSatcatCsv,
   parseTle,
   splitCsvLine,
 } from './parse.js';
@@ -117,4 +119,64 @@ test('launches and fireballs are reduced to the few fields the view needs', () =
   assert.deepEqual(fireballs[0].lat, -41.8);
   assert.deepEqual(fireballs[0].lon, -173.1);
   assert.equal(fireballs[0].date, '2026-10-04T03:14:45Z');
+});
+
+const SATCAT = [
+  'OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,OBJECT_TYPE,OPS_STATUS_CODE,OWNER,LAUNCH_DATE,LAUNCH_SITE,DECAY_DATE,PERIOD,INCLINATION,APOGEE,PERIGEE,RCS,DATA_STATUS_CODE,ORBIT_CENTER,ORBIT_TYPE',
+  'ISS (ZARYA),1998-067A,25544,PAY,+,ISS,1998-11-20,TYMSC,,92.9,51.6,420,415,399.05,,EA,ORB',
+  'SL-3 R/B,1971-028B,5118,R/B,,CIS,1971-04-01,PLMSC,,93,81.2,600,590,,,EA,ORB',
+  '"SPUTNIK 1",1957-001B,2,PAY,D,CIS,1957-10-04,TYMSC,1958-01-03,96.1,65.1,938,214,,,EA,IMP',
+  'OBJECT A,2026-001A,99001,UNK,?,UNK,2026-01-05,AFETR,,95,53,550,540,,,EA,ORB',
+].join('\r\n');
+
+test('SATCAT CSV becomes a small lookup of objects still in orbit', () => {
+  const cat = parseSatcatCsv(SATCAT);
+  assert.deepEqual(cat['25544'], ['PAY', '+', 'ISS', '1998-11-20', 'TYMSC']);
+  assert.equal(cat['2'], undefined, 'decayed objects are dropped');
+  assert.equal(cat['99001'][0], 'UNK');
+  assert.throws(() => parseSatcatCsv('<html>blocked</html>'), /header/);
+});
+
+test('the SATCAT corrects kinds and flags unknown and unlisted objects', () => {
+  const cat = parseSatcatCsv(SATCAT);
+  const unknownRow = ISS.replace('ISS (ZARYA)', 'OBJECT A').replace(',25544,', ',99001,');
+  const unlisted = ISS.replace('ISS (ZARYA)', 'NEWSAT').replace(',25544,', ',99555,');
+  const records = parseGpCsv([HEADER, ISS, unknownRow, unlisted].join('\n'));
+  const rows = mergeGroups(new Map([['active', records]]), { nowMs: NOW, satcat: cat });
+  const byId = Object.fromEntries(rows.map((r) => [r[0], r]));
+  assert.equal(byId[99001][3], 'unknown');
+  assert.match(byId[99001][14], /u/);
+  assert.match(byId[99555][14], /n/);
+  assert.doesNotMatch(byId[25544][14], /[nu]/);
+});
+
+const ATL = { name: 'Hartsfield Jackson Atlanta International Airport', icao: 'KATL', iata: 'ATL', location: 'Atlanta', countryiso2: 'US', lat: 33.6367, lon: -84.428101 };
+const SAT = { name: 'San Antonio International Airport', icao: 'KSAT', iata: 'SAT', location: 'San Antonio', countryiso2: 'US', lat: 29.533701, lon: -98.469803 };
+const DAL2009 = { callsign: 'DAL2009', number: '2009', airline_code: 'DAL', airport_codes: 'KATL-KSAT-KATL', _airport_codes_iata: 'ATL-SAT-ATL', _airports: [ATL, SAT, ATL] };
+
+test('a multi-stop route picks the leg the plane is flying, by where it is and where it is heading', () => {
+  // Arriving: just east of San Antonio, heading west.
+  const arriving = compactRoute(DAL2009, { lat: 29.6, lon: -97.9, track: 270 });
+  assert.equal(arriving.known, true);
+  assert.equal(arriving.from.code, 'ATL');
+  assert.equal(arriving.to.code, 'SAT');
+  assert.equal(arriving.to.city, 'San Antonio');
+  // Leaving San Antonio, heading east toward Atlanta.
+  const leaving = compactRoute(DAL2009, { lat: 29.7, lon: -97.9, track: 75 });
+  assert.equal(leaving.from.code, 'SAT');
+  assert.equal(leaving.to.code, 'ATL');
+});
+
+test('routes that do not fit the plane, or are unknown, say so', () => {
+  // Over Seattle: nowhere near Atlanta-San Antonio.
+  assert.deepEqual(
+    [compactRoute(DAL2009, { lat: 47.6, lon: -122.3, track: 90 }).known, compactRoute(DAL2009, { lat: 47.6, lon: -122.3 }).reason],
+    [false, 'implausible'],
+  );
+  assert.equal(compactRoute({ callsign: 'X1', airport_codes: 'unknown', _airports: [] }).reason, 'unknown');
+  assert.equal(compactRoute({ ...DAL2009, plausible: false }, { lat: 29.6, lon: -97.9 }).reason, 'implausible');
+  // Mid-leg but flying the opposite way from the only leg.
+  const oneLeg = { ...DAL2009, airport_codes: 'KATL-KSAT', _airports: [ATL, SAT] };
+  assert.equal(compactRoute(oneLeg, { lat: 31.5, lon: -91.5, track: 70 }).reason, 'implausible');
+  assert.equal(compactRoute(oneLeg, { lat: 31.5, lon: -91.5, track: 250 }).known, true);
 });

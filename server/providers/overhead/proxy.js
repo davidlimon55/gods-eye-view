@@ -9,6 +9,8 @@ import path from 'node:path';
 const ROUTE_LIMITS = Object.freeze({
   catalog: 30,
   aircraft: 90,
+  routes: 60,
+  object: 120,
   launches: 60,
   fireballs: 60,
   status: 60,
@@ -48,6 +50,10 @@ function sendJson(res, status, body, extra = {}) {
  *  GET /api/overhead/catalog    satellites, rocket bodies, debris (CelesTrak)
  *                               + hobbyist-tracked classified objects (McCants)
  *  GET /api/overhead/aircraft?lat=..&lon=..   aircraft within ~50 km (adsb.lol)
+ *  GET /api/overhead/routes?cs=..&lat=..&lon=..&track=..   one plane's
+ *                               route, from where to where (adsb.lol, cached)
+ *  GET /api/overhead/object?id=25544   catalog facts for one object
+ *                               (CelesTrak SATCAT, downloaded once a day)
  *  GET /api/overhead/launches   launches from 3 h ago to 36 h ahead (LL2)
  *  GET /api/overhead/fireballs  located fireballs, last 180 days (NASA/JPL CNEOS)
  *  GET /api/overhead/status     feed health, cache size and email-alert state
@@ -108,6 +114,41 @@ export function overheadProxy({
           at: result.at || null,
           state: result.state,
           ac: result.value?.ac ?? [],
+        });
+        return;
+      }
+      if (route === 'routes') {
+        const lat = validLatitude(url.searchParams.get('lat'));
+        const lon = validLongitude(url.searchParams.get('lon'));
+        const callsign = url.searchParams.get('cs');
+        if (lat === null || lon === null || !callsign) {
+          sendJson(res, 400, { error: 'cs, lat and lon are required' });
+          return;
+        }
+        const track = Number(url.searchParams.get('track'));
+        const result = await feeds.routes.lookup([
+          {
+            callsign,
+            lat,
+            lon,
+            track: Number.isFinite(track) ? track : undefined,
+          },
+        ]);
+        const first = Object.values(result.routes)[0] ?? {
+          known: false,
+          reason: 'unknown',
+        };
+        sendJson(res, 200, { state: result.state, route: first });
+        return;
+      }
+      if (route === 'object') {
+        const id = String(url.searchParams.get('id') || '').replace(/^c/, '');
+        if (!/^\d{1,9}$/.test(id)) {
+          sendJson(res, 400, { error: 'id must be a catalog number' });
+          return;
+        }
+        sendJson(res, 200, await feeds.object(id), {
+          'Cache-Control': 'private, max-age=3600',
         });
         return;
       }
