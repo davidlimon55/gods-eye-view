@@ -513,6 +513,38 @@ export function dateWords(iso) {
 }
 
 /**
+ * Catalog names that only hold a place until the object gets a real one:
+ * "UNKNOWN", "TBA - TO BE ASSIGNED", "TBD", "OBJECT A", "Object 12345", or
+ * nothing at all.
+ */
+const PLACEHOLDER_NAME =
+  /^(?:unknown(?: object)?|unidentified|not identified|tba(?:\s*-\s*to be assigned)?|to be assigned|tbd|n\/a|none|\?+|object(?:\s+(?:[a-z]{1,3}|\d+))?)$/i;
+
+/** True when a name is a placeholder rather than a real name. */
+export function isPlaceholderName(name) {
+  const text = String(name ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return !text || PLACEHOLDER_NAME.test(text);
+}
+
+/**
+ * The name to show for a sky object: its real name, or "Not identified"
+ * when the catalog only has a placeholder. `number` is "NORAD 12345" to show
+ * under it (or '' when there is no catalog number).
+ */
+export function displayName(object) {
+  const raw = String(object?.name ?? '').trim();
+  const n = noradNumber(object?.id);
+  const placeholder = isPlaceholderName(raw);
+  return {
+    title: placeholder ? 'Not identified' : raw,
+    number: n ? `NORAD ${n}` : '',
+    placeholder,
+  };
+}
+
+/**
  * Why an object is "Not identified", in one short line, or '' when it is
  * identified. `info` is the /api/overhead/object answer (or null).
  */
@@ -522,8 +554,7 @@ export function unidentifiedReason(object, info) {
     return 'The Space Force tracks it but has not matched it to a launch yet (an "analyst object").';
   if (object?.kind === 'unknown' || info?.type === 'UNK')
     return 'The official catalog lists what it is as unknown.';
-  if (!name || /^Object \d+$/.test(name))
-    return 'It has no public name in the catalog.';
+  if (isPlaceholderName(name)) return 'It has no public name in the catalog.';
   if (object?.noCatalog || (info && info.loaded && !info.found))
     return 'It is not in the public satellite catalog yet.';
   return '';
@@ -570,11 +601,8 @@ export function brightnessWords(mag) {
  */
 export function objectDetails(object, info, { darkness } = {}) {
   const reason = unidentifiedReason(object, info);
-  const rawName = String(object?.name || '').trim();
-  const title =
-    reason && (!rawName || /^Object \d+$/.test(rawName))
-      ? 'Not identified'
-      : rawName || 'Not identified';
+  const shown = displayName(object);
+  const title = shown.title;
   const lines = [];
   const number = noradNumber(object?.id);
   if (number) lines.push(['Catalog number', `NORAD ${number}`]);
@@ -615,6 +643,9 @@ export function objectDetails(object, info, { darkness } = {}) {
   if (dir) lines.push(['Moving', `Toward the ${dir}`]);
   return {
     title,
+    // Under a "Not identified" title: the catalog number, so it can still
+    // be looked up.
+    subtitle: shown.placeholder ? shown.number : '',
     unidentified: Boolean(reason),
     reason,
     lines,
@@ -664,7 +695,11 @@ export function filterOf(object) {
     case 'star':
       return 'stars';
     default:
-      if (UNIDENTIFIED_KINDS.includes(object?.kind) || object?.noCatalog)
+      if (
+        UNIDENTIFIED_KINDS.includes(object?.kind) ||
+        object?.noCatalog ||
+        (typeof object?.name === 'string' && isPlaceholderName(object.name))
+      )
         return 'unidentified';
       return 'satellites';
   }

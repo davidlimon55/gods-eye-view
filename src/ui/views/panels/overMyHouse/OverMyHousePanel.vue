@@ -13,7 +13,7 @@ import { TEXT_SIZE_PX } from '../../../../overhead/settings.js';
 import { localPosition } from '../../../../overhead/sky.js';
 import { wording, directionWord, clock, dayClock, miles } from '../../../../overhead/words.js';
 import { createVoiceInput } from '../../../../overhead/voice.js';
-import { FILTERS, filterCounts, filterOf, objectDetails, planeDetails } from '../../../../overhead/details.js';
+import { FILTERS, displayName, filterCounts, filterOf, objectDetails, planeDetails } from '../../../../overhead/details.js';
 
 // The Over My House panel. Everything shown is plain English (see
 // src/overhead/words.js). The owner (src/overhead/controller.js) holds the
@@ -82,12 +82,15 @@ const kindWord = (kind) =>
   kind === 'aircraft' ? 'Plane' : kind === 'planet' ? 'Planet' : kind === 'star' ? 'Star' : kind === 'moon' ? 'Moon' : kind === 'launch' ? 'Rocket launch' : KIND_LABELS[kind] ?? 'Satellite';
 
 // ---- Show / hide filters (kept in this browser) ----
-const filters = computed(() => settings.value.filters ?? {});
+// Read straight off the view, so a new filters object (the owner makes one
+// on every tap) always reaches the chips and the map in the same frame.
+const filters = computed(() => v.value.settings?.filters ?? {});
+const isOn = (id) => filters.value[id] !== false;
 const shown = (thing) => filters.value[filterOf(thing)] !== false;
 const allShown = computed(() => FILTERS.every((f) => filters.value[f.id] !== false));
 const counts = computed(() => filterCounts(sky.value));
 function toggleFilter(id) {
-  props.controls.setFilter(id, filters.value[id] === false);
+  props.controls.setFilter(id, !isOn(id));
 }
 function toggleAll() {
   props.controls.setAllFilters(!allShown.value);
@@ -123,7 +126,7 @@ const othersHere = computed(() => {
   const group = v.value.selectedGroup ?? [];
   return group.includes(v.value.selectedId) ? group.length - 1 : 0;
 });
-const rowName = (o) => (o.kind === 'analyst' || o.kind === 'unknown') && (!o.name || /^Object \d+$/.test(o.name)) ? 'Not identified' : o.name;
+const rowName = (o) => displayName(o).title;
 
 // ---- What was that? ----
 const ask = reactive({
@@ -293,17 +296,22 @@ watch(
       <p v-if="sky" class="omh-count">
         {{ w('{seen} you could see now · {up} up there in total · {planes}', { seen: sky.counts.seeable, up: sky.counts.above, planes: sky.counts.aircraft === 1 ? '1 plane nearby' : w('{n} planes nearby', { n: sky.counts.aircraft }) }) }}
       </p>
-      <div class="omh-filters" role="group" aria-label="Show on the map">
-        <UiButton class="omh-chip omh-chip-all" :pressed="allShown" @click="toggleAll()">All</UiButton>
+      <p id="omh-filters-hint" class="omh-note omh-filters-hint">Tap to show or hide. Checked = shown.</p>
+      <div class="omh-filters" role="group" aria-label="Show on the map" aria-describedby="omh-filters-hint">
+        <UiButton class="omh-chip omh-chip-all" :class="{ 'omh-chip--on': allShown }" :pressed="allShown" @click="toggleAll()"
+          ><span class="omh-chip-mark" aria-hidden="true">{{ allShown ? '✓' : '' }}</span>All<span v-if="!allShown" class="omh-chip-off" aria-hidden="true">some off</span></UiButton
+        >
         <UiButton
           v-for="f in FILTERS"
           :key="f.id"
           class="omh-chip"
-          :pressed="filters[f.id] !== false"
+          :class="{ 'omh-chip--on': isOn(f.id) }"
+          :pressed="isOn(f.id)"
           @click="toggleFilter(f.id)"
-        >{{ f.label }} <span class="omh-chip-n">{{ counts[f.id] }}</span></UiButton>
+          ><span class="omh-chip-mark" aria-hidden="true">{{ isOn(f.id) ? '✓' : '' }}</span>{{ f.label }} <span class="omh-chip-n">{{ counts[f.id] }}</span><span v-if="!isOn(f.id)" class="omh-chip-off" aria-hidden="true">off</span></UiButton
+        >
       </div>
-      <UiButton v-if="!allShown" variant="action" class="omh-more" @click="props.controls.setAllFilters(true)">Show all</UiButton>
+      <UiButton v-if="!allShown" variant="action" class="omh-more omh-show-all" @click="props.controls.setAllFilters(true)">Show all</UiButton>
       <SkyChart
         :filters="filters"
         :sky="sky"
@@ -317,6 +325,7 @@ watch(
       <div v-if="selected" class="omh-card" aria-live="polite">
         <template v-if="card">
           <strong class="omh-card-title">{{ card.title }}</strong>
+          <span v-if="card.subtitle" class="omh-card-sub">{{ card.subtitle }}</span>
           <span>{{ card.plane ? 'Plane' : kindWord(selected.kind) }} · {{ where(selected.az, selected.el) }}</span>
           <span v-if="card.plane && Number.isFinite(selected.altitudeFt)">{{ w('{feet} ft up, {mi} mi away', { feet: selected.altitudeFt, mi: miles(selected.distanceKm) }) }}</span>
           <p v-if="card.unidentified && card.plane" class="omh-note">{{ w('Not identified: {why}', { why: card.reason }) }}</p>
@@ -331,7 +340,8 @@ watch(
           <a v-if="card.moreUrl" class="omh-link" :href="card.moreUrl" target="_blank" rel="noopener">More about it (N2YO)</a>
         </template>
         <template v-else>
-          <strong>{{ selected.name }}</strong>
+          <strong>{{ displayName(selected).placeholder && selected.kind !== 'aircraft' ? 'Not identified' : selected.name }}</strong>
+          <span v-if="displayName(selected).placeholder && displayName(selected).number" class="omh-card-sub">{{ displayName(selected).number }}</span>
           <span>{{ kindWord(selected.kind) }} · {{ where(selected.az, selected.el) }}</span>
           <span v-if="Number.isFinite(selected.heightKm)">{{ w('About {mi} mi up', { mi: miles(selected.heightKm) }) }}</span>
         </template>
@@ -592,6 +602,12 @@ watch(
 .omh :deep(.ui-button) {
   min-height: max(48px, 2.7em);
   min-width: max(48px, 2.7em);
+  /* The kit's action buttons use a monospace, spaced-out font; every button
+     here uses the page's own font so they all look the same. */
+  font-family: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+  font-weight: 500;
   font-size: 1em;
   padding: 0.35em 0.8em;
   border-radius: 12px;
@@ -718,16 +734,74 @@ watch(
   gap: 0.4em;
   margin: 0.5em 0;
 }
+.omh-filters-hint {
+  margin-bottom: 0.2em;
+}
+/* Off: an outline chip with a dimmer label and the word "off". */
 .omh :deep(.omh-chip) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
   border-radius: 999px;
   padding: 0.3em 0.9em;
+  background: transparent;
+  border: 2px dashed #6c7aa6;
+  color: #c9d3ea;
+  /* Taps land at once: no 300 ms double-tap wait, no grey iOS flash. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+/* On: a filled yellow chip with a check mark. */
+.omh :deep(.omh-chip.omh-chip--on) {
+  background: #ffd166;
+  border: 2px solid #ffd166;
+  color: #111;
+  font-weight: 600;
+}
+.omh-chip-mark {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+  font-weight: 700;
+}
+.omh-chip-mark:empty {
+  width: 0;
+  margin-right: -0.3em;
 }
 .omh-chip-n {
-  opacity: 0.8;
+  opacity: 0.85;
   font-variant-numeric: tabular-nums;
+}
+.omh-chip-off {
+  font-size: 0.8em;
+  font-weight: 600;
+  padding: 0.05em 0.45em;
+  border-radius: 999px;
+  border: 1px solid #6c7aa6;
+  color: #dbe4ff;
+}
+/* Brief pressed look on every tap (a colour change; the shrink only when
+   motion is welcome). */
+.omh :deep(.ui-button:not(:disabled):active),
+.omh :deep(.ui-segmented__item:active) {
+  filter: brightness(1.25);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .omh :deep(.ui-button),
+  .omh :deep(.ui-segmented__item) {
+    transition: transform 80ms ease-out, filter 80ms ease-out;
+  }
+  .omh :deep(.ui-button:not(:disabled):active),
+  .omh :deep(.ui-segmented__item:active) {
+    transform: scale(0.96);
+  }
 }
 .omh-card-title {
   font-size: 1.1em;
+}
+.omh-card-sub {
+  color: #c9d3ea;
+  font-variant-numeric: tabular-nums;
 }
 .omh-facts {
   margin: 0.4em 0 0.2em;

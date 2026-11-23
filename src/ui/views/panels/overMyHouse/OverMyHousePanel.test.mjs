@@ -180,13 +180,23 @@ test('a tapped satellite shows its catalog facts, and crowded spots offer the ne
   gray.unmount();
 });
 
-test('filter chips show counts, turn groups off, and Show all resets', async () => {
+test('filter chips show counts, say on or off plainly, turn groups off, and Show all resets', async () => {
   const c = controls();
   const wrapper = mount(Panel, { props: { view: view(), controls: c } });
+  assert.equal(wrapper.get('.omh-filters-hint').text(), 'Tap to show or hide. Checked = shown.');
   const chips = wrapper.findAll('.omh-filters button');
-  assert.deepEqual(chips.map((b) => b.text().replace(/\s+\d+$/, '')), ['All', 'Planes', 'Satellites (working)', 'Starlink', 'Rocket bodies', 'Debris', 'Classified', 'Not identified', 'Planets and Moon', 'Stars']);
+  const name = (b) => b.text().replace(/^✓/, '').replace(/\s*off$/, '').replace(/\s+\d+$/, '');
+  assert.deepEqual(chips.map(name), ['All', 'Planes', 'Satellites (working)', 'Starlink', 'Rocket bodies', 'Debris', 'Classified', 'Not identified', 'Planets and Moon', 'Stars']);
   assert.match(chips[2].text(), /Satellites \(working\)\s+1/);
-  assert.equal(chips[0].attributes('aria-pressed'), 'true');
+  // Every chip starts on: filled, with a check mark, and no "off".
+  for (const chip of chips) {
+    assert.equal(chip.attributes('aria-pressed'), 'true');
+    assert.ok(chip.classes().includes('omh-chip--on'));
+    assert.match(chip.text(), /^✓/);
+    assert.doesNotMatch(chip.text(), /off/);
+  }
+  // Nothing hidden, so no extra Show all button.
+  assert.equal(wrapper.findAll('button').some((b) => b.text() === 'Show all'), false);
   await chips[7].trigger('click');
   assert.deepEqual(c.calls.find((call) => call[0] === 'setFilter'), ['setFilter', 'unidentified', false]);
   await chips[0].trigger('click');
@@ -195,8 +205,78 @@ test('filter chips show counts, turn groups off, and Show all resets', async () 
   const only = Object.fromEntries(['planes', 'satellites', 'starlink', 'rocket', 'debris', 'classified', 'unidentified', 'planets', 'stars'].map((k) => [k, k === 'unidentified']));
   const filtered = mount(Panel, { props: { view: view({ settings: { home: null, observer: 'home', textSize: 'normal', sizerOn: true, filters: only } }), controls: c } });
   assert.doesNotMatch(filtered.get('.omh-list').exists() ? filtered.get('.omh-list').text() : '', /ISS/);
+  const offChip = filtered.findAll('.omh-filters button')[1];
+  assert.equal(offChip.attributes('aria-pressed'), 'false');
+  assert.ok(!offChip.classes().includes('omh-chip--on'));
+  assert.match(offChip.text(), /off$/);
+  assert.doesNotMatch(offChip.text(), /✓/);
+  // All is off while anything is hidden; tapping it turns everything on.
+  const all = filtered.findAll('.omh-filters button')[0];
+  assert.equal(all.attributes('aria-pressed'), 'false');
+  await all.trigger('click');
+  assert.deepEqual(c.calls.filter((call) => call[0] === 'setAllFilters').pop(), ['setAllFilters', true]);
   const showAll = filtered.findAll('button').find((b) => b.text() === 'Show all');
+  assert.ok(showAll.classes().includes('omh-show-all'));
   await showAll.trigger('click');
   assert.deepEqual(c.calls.filter((call) => call[0] === 'setAllFilters').pop(), ['setAllFilters', true]);
   filtered.unmount();
+});
+
+test('with the real owner, a chip tap flips the chip on the next render without new sky maths', async () => {
+  const { createOverMyHouse } = await import('../../../../overhead/controller.js');
+  const { markRaw } = await import('vue');
+  const posted = [];
+  const objects = Array.from({ length: 3000 }, (_, i) => ({ id: String(40000 + i), name: `SAT ${i}`, kind: ['payload', 'starlink', 'debris', 'rocket'][i % 4], az: (i * 37) % 360, el: 5 + (i % 80), mag: 5, visible: i % 50 === 0 }));
+  const sky = { ...view().sky, objects, counts: { above: 3000, seeable: 60, aircraft: 0, total: 3000 } };
+  const worker = {
+    postMessage({ id, type }) {
+      posted.push(type);
+      queueMicrotask(() => worker.onmessage({ data: { id, ok: true, result: type === 'load' ? { total: 3000, counts: {}, sources: [] } : type === 'now' ? sky : { window: null, passes: [], trains: [] } } }));
+    },
+    terminate() {},
+  };
+  let latest = null;
+  const omh = createOverMyHouse({
+    publish: (next) => (latest = markRaw(next)),
+    createWorker: () => worker,
+    storage: { getItem: () => null, setItem() {} },
+    documentRef: null,
+    navigatorRef: null,
+    fetchImpl: async () => new Response(JSON.stringify({ ac: [], items: [] })),
+  });
+  await omh.open();
+  await new Promise((r) => setTimeout(r, 0));
+  const wrapper = mount(Panel, { props: { view: latest, controls: omh } });
+  const chip = () => wrapper.findAll('.omh-filters button')[3];
+  assert.match(chip().text(), /^✓Starlink/);
+  const postedBefore = posted.length;
+  const times = [];
+  for (let i = 0; i < 6; i++) {
+    const started = performance.now();
+    await chip().trigger('click');
+    await wrapper.setProps({ view: latest });
+    times.push(performance.now() - started);
+    assert.equal(chip().attributes('aria-pressed'), i % 2 === 0 ? 'false' : 'true', `tap ${i + 1} shows on the chip`);
+  }
+  assert.equal(posted.length, postedBefore, 'a filter tap never asks the worker to work out positions again');
+  // Hiding Starlink takes its rows out of the list.
+  await chip().trigger('click');
+  await wrapper.setProps({ view: latest });
+  assert.doesNotMatch(wrapper.get('.omh-list').text(), /Starlink/);
+  const median = times.sort((a, b) => a - b)[Math.floor(times.length / 2)];
+  console.log(`# chip tap to rendered chip with 3,000 objects: median ${median.toFixed(1)} ms`);
+  assert.ok(median < 100, `a chip tap took ${median.toFixed(1)} ms to show`);
+  wrapper.unmount();
+  omh.destroy();
+});
+
+test('a satellite named UNKNOWN shows as Not identified with its catalog number, in the card and the list', () => {
+  const unknown = { id: '58100', name: 'UNKNOWN', kind: 'payload', az: 45, el: 50, mag: 2, visible: true, sunlit: true, heightKm: 500 };
+  const sky = { ...view().sky, objects: [unknown] };
+  const wrapper = mount(Panel, { props: { view: view({ sky, selectedId: '58100' }), controls: controls() } });
+  assert.equal(wrapper.get('.omh-card-title').text(), 'Not identified');
+  assert.equal(wrapper.get('.omh-card-sub').text(), 'NORAD 58100');
+  assert.match(wrapper.get('.omh-list').text(), /Not identified/);
+  assert.doesNotMatch(wrapper.text(), /UNKNOWN/);
+  wrapper.unmount();
 });

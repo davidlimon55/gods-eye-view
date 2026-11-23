@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createOverMyHouse } from './controller.js';
+import { SAVE_DELAY_MS, createOverMyHouse } from './controller.js';
 
 function memoryStorage() {
   const data = new Map();
@@ -17,9 +17,11 @@ const SKY = {
 
 function setup() {
   const fetched = [];
+  const posted = [];
   let last = null;
   const worker = {
     postMessage({ id, type }) {
+      posted.push(type);
       queueMicrotask(() => worker.onmessage({ data: { id, ok: true, result: type === 'load' ? { total: 2, counts: {}, sources: [] } : type === 'now' ? SKY : { window: null, passes: [], trains: [] } } }));
     },
     terminate() {},
@@ -38,7 +40,7 @@ function setup() {
       return new Response(JSON.stringify({ ac: [], items: [] }));
     },
   });
-  return { omh, fetched, storage, view: () => last };
+  return { omh, fetched, posted, storage, view: () => last };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -67,13 +69,56 @@ test('selecting looks up a plane route or a satellite catalog entry once, and st
   omh.destroy();
 });
 
-test('filters are saved in the browser and Show all turns every group back on', () => {
+test('filters are saved in the browser and Show all turns every group back on', async () => {
   const { omh, storage, view } = setup();
   omh.setAllFilters(false);
   omh.setFilter('unidentified', true);
   assert.equal(Object.values(view().settings.filters).filter(Boolean).length, 1);
+  // Quick taps are written once, a moment after the last one.
+  assert.equal(storage.data.size, 0);
+  await new Promise((r) => setTimeout(r, SAVE_DELAY_MS + 50));
   assert.match([...storage.data.values()][0], /"unidentified":true/);
   omh.setAllFilters(true);
   assert.ok(Object.values(view().settings.filters).every(Boolean));
+  // Closing the page writes at once.
+  omh.destroy();
+  assert.match([...storage.data.values()][0], /"unidentified":true,"planets":true/);
+});
+
+test('a filter tap publishes new settings at once and never re-runs the sky maths or the network', async () => {
+  const { omh, fetched, posted, view } = setup();
+  await omh.open();
+  await tick();
+  const before = view();
+  const postedBefore = posted.length;
+  const fetchedBefore = fetched.length;
+  const started = performance.now();
+  for (let i = 0; i < 50; i++) {
+    omh.setFilter('planes', i % 2 === 1);
+    omh.setAllFilters(i % 3 === 0);
+  }
+  const perTap = (performance.now() - started) / 100;
+  await tick();
+  assert.equal(posted.length, postedBefore, 'no worker call (orbit propagation) on a filter tap');
+  assert.equal(fetched.length, fetchedBefore, 'no network call on a filter tap');
+  // The view gets a fresh settings and filters object, so it can tell the
+  // chips changed (the old in-place change left them stuck).
+  omh.setFilter('stars', false);
+  assert.notEqual(view().settings, before.settings);
+  assert.notEqual(view().settings.filters, before.settings.filters);
+  assert.equal(view().settings.filters.stars, false);
+  // The sky itself is the same object: nothing was worked out again.
+  assert.equal(view().sky, before.sky);
+  assert.ok(perTap < 5, `a filter tap took ${perTap.toFixed(3)} ms in the owner`);
+  omh.destroy();
+});
+
+test('other settings are replaced too, never changed in place', () => {
+  const { omh, view } = setup();
+  const first = view().settings;
+  omh.setTextSize('xl');
+  assert.notEqual(view().settings, first);
+  assert.equal(first.textSize, 'normal');
+  assert.equal(view().settings.textSize, 'xl');
   omh.destroy();
 });

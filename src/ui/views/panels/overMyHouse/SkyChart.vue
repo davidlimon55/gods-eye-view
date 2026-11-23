@@ -11,7 +11,7 @@ import {
   toScreen,
   zoomAbout,
 } from '../../../../overhead/skyView.js';
-import { filterOf } from '../../../../overhead/details.js';
+import { displayName, filterOf } from '../../../../overhead/details.js';
 
 // A round map of the sky over the house, drawn on a canvas: the centre is
 // straight overhead, the edge is the horizon, north is up and east is to the
@@ -47,11 +47,15 @@ const view = ref({ zoom: 1, panX: 0, panY: 0 });
 const zoomed = computed(() => view.value.zoom > 1.001);
 let pending = 0;
 let tween = 0;
+// The view for the frame being drawn, read once per draw instead of once per
+// dot (a reactive read per dot adds up over a few thousand dots).
+let frameView = { zoom: 1, panX: 0, panY: 0 };
+const DEG = Math.PI / 180;
 
 function project(az, el, cx, cy, r) {
   const d = (Math.max(0, 90 - el) / 90) * r;
-  const a = (az * Math.PI) / 180;
-  return toScreen(view.value, cx, cy, cx + d * Math.sin(a), cy - d * Math.cos(a));
+  const a = az * DEG;
+  return toScreen(frameView, cx, cy, cx + d * Math.sin(a), cy - d * Math.cos(a));
 }
 
 function schedule() {
@@ -64,6 +68,25 @@ function schedule() {
   pending = raf(() => {
     pending = 0;
     draw();
+  });
+}
+
+/**
+ * Redraw after the next paint: a filter tap first paints the chip's new
+ * look, then the map catches up a frame later, so the chip never waits on
+ * the map.
+ */
+let afterPaint = 0;
+function scheduleAfterPaint() {
+  const raf = globalThis.requestAnimationFrame;
+  if (typeof raf !== 'function') {
+    draw();
+    return;
+  }
+  if (afterPaint || pending) return;
+  afterPaint = raf(() => {
+    afterPaint = 0;
+    schedule();
   });
 }
 
@@ -95,8 +118,9 @@ function draw() {
   const fitted = clampView(view.value, r);
   if (fitted.zoom !== view.value.zoom || fitted.panX !== view.value.panX || fitted.panY !== view.value.panY)
     view.value = fitted;
-  const { zoom } = view.value;
-  const [ox, oy] = toScreen(view.value, cx, cy, cx, cy);
+  frameView = { ...view.value };
+  const { zoom } = frameView;
+  const [ox, oy] = toScreen(frameView, cx, cy, cx, cy);
   const R = r * zoom;
   points = [];
   ctx.clearRect(0, 0, size, size);
@@ -158,14 +182,56 @@ function draw() {
   }
 }
 
+/**
+ * A list of dots or lines to draw in one go. (Path2D is not in every test
+ * canvas, so this keeps plain numbers and builds one path when drawn.)
+ */
+class DrawBatch {
+  constructor() {
+    this.items = [];
+  }
+  dot(x, y, radius) {
+    this.items.push(x, y, radius);
+  }
+  line(x1, y1, x2, y2) {
+    this.items.push(x1, y1, x2, y2);
+  }
+  fill(ctx) {
+    const items = this.items;
+    if (!items.length) return;
+    ctx.beginPath();
+    for (let i = 0; i < items.length; i += 3) {
+      ctx.moveTo(items[i] + items[i + 2], items[i + 1]);
+      ctx.arc(items[i], items[i + 1], items[i + 2], 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+  stroke(ctx) {
+    const items = this.items;
+    if (!items.length) return;
+    ctx.beginPath();
+    for (let i = 0; i < items.length; i += 4) {
+      ctx.moveTo(items[i], items[i + 1]);
+      ctx.lineTo(items[i + 2], items[i + 3]);
+    }
+    ctx.stroke();
+  }
+}
+
 function drawSky(ctx, cx, cy, r) {
   const sky = props.sky;
   if (!sky) return;
-  for (const star of props.filters?.stars === false ? [] : (sky.stars ?? [])) {
-    const [x, y] = project(star.az, star.el, cx, cy, r);
+  // Dots of one colour go into one path and are filled once: a few fills
+  // per frame instead of one per dot.
+  if (props.filters?.stars !== false && sky.stars?.length) {
     ctx.fillStyle = 'rgba(220,230,255,0.75)';
     ctx.beginPath();
-    ctx.arc(x, y, Math.max(1, 3 - star.mag), 0, Math.PI * 2);
+    for (const star of sky.stars) {
+      const [x, y] = project(star.az, star.el, cx, cy, r);
+      const radius = Math.max(1, 3 - star.mag);
+      ctx.moveTo(x + radius, y);
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+    }
     ctx.fill();
   }
   ctx.font = '13px system-ui, sans-serif';
@@ -191,36 +257,40 @@ function drawSky(ctx, cx, cy, r) {
   }
   // Up there but not lit or too faint: small grey dots. Every one can be
   // tapped (tier 1, so a bright dot on the same spot wins the tap).
-  for (const object of sky.objects ?? []) {
+  const objects = sky.objects ?? [];
+  ctx.fillStyle = 'rgba(170,180,200,0.6)';
+  ctx.beginPath();
+  for (const object of objects) {
     if (object.visible || !shown(object)) continue;
     const [x, y] = project(object.az, object.el, cx, cy, r);
-    ctx.fillStyle = 'rgba(170,180,200,0.6)';
-    ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
+    ctx.rect(x - 1.5, y - 1.5, 3, 3);
     points.push({ id: object.id, x, y, tier: 1, mag: object.mag });
   }
-  for (const object of sky.objects ?? []) {
+  ctx.fill();
+  // Seeable things: one dot path and one heading-line path per colour.
+  const groups = new Map();
+  for (const object of objects) {
     if (!object.visible || !shown(object)) continue;
     const [x, y] = project(object.az, object.el, cx, cy, r);
     const selected = object.id === props.selectedId;
-    ctx.fillStyle = object.kind === 'classified' ? '#ff7bd5' : object.kind === 'station' ? '#7df9ff' : '#8dff8a';
-    ctx.beginPath();
-    ctx.arc(x, y, selected ? 7 : Math.max(3, 6 - (object.mag ?? 5)), 0, Math.PI * 2);
-    ctx.fill();
+    const color = object.kind === 'classified' ? '#ff7bd5' : object.kind === 'station' ? '#7df9ff' : '#8dff8a';
+    let group = groups.get(color);
+    if (!group) groups.set(color, (group = { dots: new DrawBatch(), lines: new DrawBatch() }));
+    group.dots.dot(x, y, selected ? 7 : Math.max(3, 6 - (object.mag ?? 5)));
     if (Number.isFinite(object.heading)) {
-      const a = (object.heading * Math.PI) / 180;
-      ctx.strokeStyle = ctx.fillStyle;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + 14 * Math.sin(a), y - 14 * Math.cos(a));
-      ctx.stroke();
-    }
-    if (selected) {
-      ctx.fillStyle = '#fff';
-      ctx.fillText(object.name, x, y - 14);
+      const a = object.heading * DEG;
+      group.lines.line(x, y, x + 14 * Math.sin(a), y - 14 * Math.cos(a));
     }
     points.push({ id: object.id, x, y, tier: 0, mag: object.mag });
   }
+  ctx.lineWidth = 2;
+  for (const [color, group] of groups) {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    group.dots.fill(ctx);
+    group.lines.stroke(ctx);
+  }
+
   for (const plane of props.filters?.planes === false ? [] : (sky.aircraft ?? [])) {
     const [x, y] = project(plane.az, plane.el, cx, cy, r);
     const a = (((plane.track ?? 0) * Math.PI) / 180);
@@ -252,11 +322,22 @@ function drawSky(ctx, cx, cy, r) {
   });
   // The selected thing gets a white ring (with a dark edge for contrast).
   const picked = props.selectedId ? points.find((p) => p.id === props.selectedId) : null;
-  const pickedObject = picked ? (sky.objects ?? []).find((o) => o.id === picked.id && !o.visible) : null;
+  // The selected satellite's name above its ring; a placeholder name
+  // ("UNKNOWN", "TBA", "OBJECT A") reads "Not identified" with the catalog
+  // number under it.
+  const pickedObject = picked ? (sky.objects ?? []).find((o) => o.id === picked.id) : null;
   if (pickedObject) {
-    ctx.fillStyle = '#fff';
+    const shown = displayName(pickedObject);
+    const lines = shown.placeholder && shown.number ? [shown.title, shown.number] : [shown.title];
     ctx.font = '13px system-ui, sans-serif';
-    ctx.fillText(pickedObject.name || 'Not identified', picked.x, picked.y - 22);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillStyle = '#fff';
+    lines.forEach((text, i) => {
+      const y = picked.y - 22 - (lines.length - 1 - i) * 15;
+      ctx.strokeText(text, picked.x, y);
+      ctx.fillText(text, picked.x, y);
+    });
   }
   if (picked) {
     ctx.lineWidth = 5;
@@ -443,6 +524,7 @@ onBeforeUnmount(() => {
   resize?.disconnect();
   stopTween();
   if (pending) globalThis.cancelAnimationFrame?.(pending);
+  if (afterPaint) globalThis.cancelAnimationFrame?.(afterPaint);
   const el = canvas.value;
   if (el) {
     el.removeEventListener('wheel', onWheel);
@@ -452,7 +534,7 @@ onBeforeUnmount(() => {
   }
 });
 watch(() => [props.sky, props.matches, props.selectedId, props.lookAz], schedule);
-watch(() => ({ ...props.filters }), schedule);
+watch(() => ({ ...props.filters }), scheduleAfterPaint);
 </script>
 
 <template>

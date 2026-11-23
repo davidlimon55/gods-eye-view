@@ -16,6 +16,8 @@ import {
 const NOW_EVERY_MS = 4000;
 const AIRCRAFT_EVERY_MS = 20000;
 const TONIGHT_EVERY_MS = 30 * 60000;
+/** Settings are written to this browser's storage this long after the last change. */
+export const SAVE_DELAY_MS = 300;
 
 /**
  * @param {{publish: (view: object) => void, createWorker?: () => Worker,
@@ -69,6 +71,7 @@ export function createOverMyHouse({
   let timers = [];
   let catalogPromise = null;
   let destroyed = false;
+  let saveTimer = null;
 
   const emit = () => {
     if (destroyed) return;
@@ -226,9 +229,31 @@ export function createOverMyHouse({
     emit();
   }
 
+  /**
+   * Settings are replaced, never changed in place: the view compares the
+   * settings object by identity, so a fresh object is what tells it a chip,
+   * the text size or the home changed. (Changing the old object in place left
+   * the filter chips and the map stuck until the page was reloaded.)
+   */
+  function change(patch) {
+    state.settings = { ...state.settings, ...patch };
+    save();
+  }
+
+  /**
+   * Show the change right away; write it to storage a moment later, so a
+   * run of quick taps writes once. Leaving the page writes at once.
+   */
   function save() {
-    writeSettings(state.settings, storage);
     emit();
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, SAVE_DELAY_MS);
+  }
+
+  function flushSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    writeSettings(state.settings, storage);
   }
 
   function observerChanged() {
@@ -263,9 +288,10 @@ export function createOverMyHouse({
           state.here = spot;
           if (asHome) {
             // i18n-ignore
-            state.settings.home = { ...spot, label: 'My location' };
-            state.settings.observer = 'home';
-            save();
+            change({
+              home: { ...spot, label: 'My location' },
+              observer: 'home',
+            });
           }
           observerChanged();
           resolve(true);
@@ -330,28 +356,23 @@ export function createOverMyHouse({
   function setHome(home) {
     const clean = cleanHome(home);
     if (!clean) return;
-    state.settings.home = clean;
-    state.settings.observer = 'home';
-    save();
+    change({ home: clean, observer: 'home' });
     observerChanged();
   }
 
   function setObserver(kind) {
-    state.settings.observer = kind === 'here' ? 'here' : 'home';
-    save();
+    change({ observer: kind === 'here' ? 'here' : 'home' });
     if (kind === 'here' && !state.here) void locate();
     else observerChanged();
   }
 
   function setTextSize(size) {
     if (!TEXT_SIZES.includes(size)) return;
-    state.settings.textSize = size;
-    save();
+    change({ textSize: size });
   }
 
   function setSizerOn(on) {
-    state.settings.sizerOn = Boolean(on);
-    save();
+    change({ sizerOn: Boolean(on) });
   }
 
   async function runIdentify(query) {
@@ -560,26 +581,32 @@ export function createOverMyHouse({
     void loadDetails(state.selectedId);
   }
 
+  // Filters only change which already-worked-out things are drawn and
+  // listed: no worker call, no orbit maths and no network here.
   function setFilter(key, on) {
     if (!FILTER_KEYS.includes(key)) return;
-    state.settings.filters = cleanFilters({
-      ...state.settings.filters,
-      [key]: Boolean(on),
+    change({
+      filters: cleanFilters({ ...state.settings.filters, [key]: Boolean(on) }),
     });
-    save();
   }
 
   function setAllFilters(on) {
-    state.settings.filters = Object.fromEntries(
-      FILTER_KEYS.map((key) => [key, Boolean(on)]),
-    );
-    save();
+    change({
+      filters: Object.fromEntries(FILTER_KEYS.map((key) => [key, Boolean(on)])),
+    });
   }
 
   const onVisibility = () => {
-    if (!hidden()) void refreshNow();
+    if (hidden()) {
+      if (saveTimer) flushSave();
+    } else void refreshNow();
   };
   documentRef?.addEventListener?.('visibilitychange', onVisibility);
+  const onPageHide = () => {
+    if (saveTimer) flushSave();
+  };
+  const pageWindow = documentRef?.defaultView ?? null;
+  pageWindow?.addEventListener?.('pagehide', onPageHide);
 
   emit();
   if (openAtStart) void open();
@@ -601,10 +628,12 @@ export function createOverMyHouse({
     setFilter,
     setAllFilters,
     destroy() {
+      if (saveTimer) flushSave();
       destroyed = true;
       stopCompass();
       stopTimers();
       documentRef?.removeEventListener?.('visibilitychange', onVisibility);
+      pageWindow?.removeEventListener?.('pagehide', onPageHide);
       worker?.terminate?.();
       worker = null;
     },

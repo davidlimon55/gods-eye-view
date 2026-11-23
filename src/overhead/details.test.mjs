@@ -4,7 +4,9 @@ import {
   adsbMapUrl,
   aircraftTypeWords,
   filterCounts,
+  displayName,
   filterOf,
+  isPlaceholderName,
   mphFromKms,
   mphFromKnots,
   n2yoUrl,
@@ -118,4 +120,22 @@ test('every sky thing falls in one filter, and counts add up', () => {
   assert.equal(counts.planes, 1);
   assert.equal(counts.planets, 2);
   assert.equal(counts.stars, 1);
+});
+
+test('placeholder names read "Not identified" with the catalog number under it', () => {
+  for (const name of ['UNKNOWN', 'unknown object', 'TBA - TO BE ASSIGNED', 'TBA', 'TBD', 'OBJECT A', 'OBJECT ZZ', 'Object 81001', '', '  '])
+    assert.equal(isPlaceholderName(name), true, JSON.stringify(name));
+  for (const name of ['ISS (ZARYA)', 'STARLINK-1007', 'OBJECTIVE-1', 'SL-3 R/B', 'COSMOS 2251 DEB'])
+    assert.equal(isPlaceholderName(name), false, name);
+  const card = objectDetails({ id: '58100', name: 'UNKNOWN', kind: 'payload', heightKm: 500 }, null);
+  assert.equal(card.title, 'Not identified');
+  assert.equal(card.subtitle, 'NORAD 58100');
+  assert.equal(card.unidentified, true);
+  assert.deepEqual(displayName({ id: 'c37162', name: 'TBA' }), { title: 'Not identified', number: 'NORAD 37162', placeholder: true });
+  // A real name stays, with no extra line.
+  const iss = objectDetails({ id: '25544', name: 'ISS (ZARYA)', kind: 'station' }, null);
+  assert.equal(iss.title, 'ISS (ZARYA)');
+  assert.equal(iss.subtitle, '');
+  // And the map's "Not identified" chip covers them.
+  assert.equal(filterOf({ id: '58100', name: 'OBJECT A', kind: 'payload' }), 'unidentified');
 });
