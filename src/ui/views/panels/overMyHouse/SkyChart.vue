@@ -231,6 +231,9 @@ function drawSky(ctx, cx, cy, r) {
       const radius = Math.max(1, 3 - star.mag);
       ctx.moveTo(x + radius, y);
       ctx.arc(x, y, radius, 0, Math.PI * 2);
+      // Stars can be tapped too (tier 1: a satellite or plane on the same
+      // spot wins the tap, the star comes up with "Show the next one").
+      points.push({ id: `star-${star.name}`, x, y, tier: 1, mag: star.mag });
     }
     ctx.fill();
   }
@@ -254,6 +257,7 @@ function drawSky(ctx, cx, cy, r) {
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.fillText('Moon', x, y - 16);
+    points.push({ id: 'moon', x, y, tier: 0, mag: -10 });
   }
   // Up there but not lit or too faint: small grey dots. Every one can be
   // tapped (tier 1, so a bright dot on the same spot wins the tap).

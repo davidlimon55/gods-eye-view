@@ -116,9 +116,25 @@ const selected = computed(() => {
     (sky.value?.objects ?? []).find((o) => o.id === id) ||
     (sky.value?.aircraft ?? []).find((o) => o.id === id) ||
     (v.value.identify.result?.candidates ?? []).find((o) => o.id === id) ||
+    skyBody(id) ||
     null
   );
 });
+// Stars, planets and the Moon on the map: tappable like everything else.
+function skyBody(id) {
+  const s = sky.value;
+  if (!s) return null;
+  if (id === 'moon' && s.moon) return { id, kind: 'moon', name: 'Moon', az: s.moon.az, el: s.moon.el, illuminated: s.moon.illuminated };
+  if (id.startsWith('planet-')) {
+    const p = (s.planets ?? []).find((x) => `planet-${x.name}` === id);
+    if (p) return { id, kind: 'planet', ...p };
+  }
+  if (id.startsWith('star-')) {
+    const st = (s.stars ?? []).find((x) => `star-${x.name}` === id);
+    if (st) return { id, kind: 'star', ...st };
+  }
+  return null;
+}
 const details = computed(() => (v.value.details && v.value.details.id === v.value.selectedId ? v.value.details : null));
 const card = computed(() => {
   const thing = selected.value;
@@ -331,7 +347,7 @@ watch(
         label="Map of your sky. North is up and the middle is straight overhead."
         @select="(id) => props.controls.select(id)"
       />
-      <p class="omh-note omh-legend">The middle is straight overhead. The edge is the horizon. Orange arrows are planes. Green dots are satellites you can see now, light blue are space stations, pink are classified satellites, and gray dots are too dim to see. Yellow dots are planets. Pinch or tap + to zoom. Tap any dot to see what it is.</p>
+      <p class="omh-note omh-legend">The middle is straight overhead. The edge is the horizon. Orange arrows are planes. Green dots are satellites you can see now, light blue are space stations, pink are classified satellites, and gray dots are too dim to see. Yellow dots are planets and small white dots are stars. Pinch or tap + to zoom. Tap any dot to see what it is.</p>
       <div v-if="selected" class="omh-card" aria-live="polite">
         <template v-if="card">
           <strong class="omh-card-title">{{ card.title }}</strong>
@@ -354,6 +370,11 @@ watch(
           <span v-if="displayName(selected).placeholder && displayName(selected).number" class="omh-card-sub">{{ displayName(selected).number }}</span>
           <span>{{ kindWord(selected.kind) }} · {{ where(selected.az, selected.el) }}</span>
           <span v-if="Number.isFinite(selected.heightKm)">{{ w('About {mi} mi up', { mi: miles(selected.heightKm) }) }}</span>
+          <template v-if="['star', 'planet', 'moon'].includes(selected.kind)">
+            <span v-if="selected.kind === 'moon' && Number.isFinite(selected.illuminated)">{{ w('{pct}% lit', { pct: selected.illuminated }) }}</span>
+            <span v-else-if="Number.isFinite(selected.mag)">{{ w('Brightness: {b}', { b: brightness(selected.mag) }) }}</span>
+            <p class="omh-note">{{ selected.kind === 'star' ? 'A star. It stays still and only drifts slowly with the night sky. It does not cross the sky in minutes like a satellite.' : selected.kind === 'planet' ? 'A planet. It looks like a steady bright star and moves only a little night to night.' : 'The Moon.' }}</p>
+          </template>
         </template>
         <div v-if="othersHere > 0" class="omh-others">
           <span>{{ othersHere === 1 ? '1 other object here' : w('{n} other objects here', { n: othersHere }) }}</span>

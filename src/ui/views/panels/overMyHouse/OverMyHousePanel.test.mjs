@@ -28,7 +28,7 @@ function view(overrides = {}) {
       sun: { el: -20, darkness: 'night' },
       moon: { az: 90, el: 40, illuminated: 50, waxing: true },
       planets: [{ id: 'jupiter', name: 'Jupiter', az: 100, el: 30, mag: -2.2 }],
-      stars: [],
+      stars: [{ name: 'Vega', az: 300, el: 60, mag: 0.03 }],
       aircraft: [],
       objects: [{ id: '25544', name: 'ISS (ZARYA)', kind: 'station', az: 45, el: 50, mag: -2, visible: true, heading: 90, heightKm: 420 }],
       counts: { above: 1, seeable: 1, aircraft: 0, total: 3 },
@@ -274,4 +274,18 @@ test('a satellite named UNKNOWN shows as Not identified with its catalog number,
   assert.match(wrapper.get('.omh-list').text(), /Not identified/);
   assert.doesNotMatch(wrapper.text(), /UNKNOWN/);
   wrapper.unmount();
+});
+
+test('stars, planets and the Moon open a card when tapped', () => {
+  for (const [id, title, words] of [
+    ['star-Vega', 'Vega', /Star.*bright.*A star\./s],
+    ['planet-Jupiter', 'Jupiter', /Planet.*very bright.*A planet\./s],
+    ['moon', 'Moon', /Moon.*50% lit/s],
+  ]) {
+    const wrapper = mount(Panel, { props: { view: view({ selectedId: id }), controls: controls() } });
+    const card = wrapper.get('.omh-card');
+    assert.equal(card.get('strong').text(), title);
+    assert.match(card.text(), words);
+    wrapper.unmount();
+  }
 });
